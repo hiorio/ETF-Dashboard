@@ -262,51 +262,25 @@ def _yf_session():
 
 
 def _get_aum(ticker, session, crumb):
-    """Yahoo Finance에서 AUM(순자산총액) 수집 — 여러 경로 순차 시도"""
-    # ① quoteSummary defaultKeyStatistics / summaryDetail
+    """Yahoo Finance 종목 페이지 HTML에서 AUM 파싱 (API 401 우회)"""
+    import re as _re
     try:
-        params = {"modules": "defaultKeyStatistics,summaryDetail"}
-        if crumb:
-            params["crumb"] = crumb
-        url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
-        res = session.get(url, params=params, timeout=10)
-        log.info(f"[{ticker}] quoteSummary {res.status_code}")
-        data = res.json()
-        results = ((data.get("quoteSummary") or {}).get("result") or [])
-        if results:
-            r = results[0]
-            for module in ("defaultKeyStatistics", "summaryDetail"):
-                raw = ((r.get(module) or {}).get("totalAssets") or {}).get("raw")
-                if raw:
-                    log.info(f"[{ticker}] AUM={raw:,.0f} (from {module})")
-                    return float(raw)
-            # 원본 응답 로그 (첫 600자)
-            import json as _json
-            log.info(f"[{ticker}] quoteSummary raw: {_json.dumps(results[0])[:600]}")
+        url = f"https://finance.yahoo.com/quote/{ticker}"
+        res = session.get(url, timeout=15)
+        log.info(f"[{ticker}] AUM HTML {res.status_code} ({len(res.content)} bytes)")
+        if res.status_code != 200:
+            log.warning(f"[{ticker}] AUM 수집 실패")
+            return None
+        text = res.text
+        # 페이지 내 JSON: "totalAssets":{"raw":37000000000,...}
+        m = _re.search(r'"totalAssets"\s*:\s*\{"raw"\s*:\s*([\d.E+]+)', text)
+        if m:
+            val = float(m.group(1))
+            log.info(f"[{ticker}] AUM={val:,.0f} (from HTML)")
+            return val
+        log.warning(f"[{ticker}] AUM 필드 없음 (HTML 파싱 실패)")
     except Exception as e:
-        log.warning(f"[{ticker}] quoteSummary 오류: {e}")
-
-    # ② v7 quote API (totalAssets 직접 필드)
-    try:
-        params2 = {"symbols": ticker}
-        if crumb:
-            params2["crumb"] = crumb
-        res2 = session.get("https://query1.finance.yahoo.com/v7/finance/quote",
-                           params=params2, timeout=10)
-        log.info(f"[{ticker}] v7 quote {res2.status_code}")
-        data2 = res2.json()
-        result2 = (((data2.get("quoteResponse") or {}).get("result")) or [])
-        if result2:
-            r2 = result2[0]
-            val = r2.get("totalAssets") or r2.get("netAssets")
-            if val:
-                log.info(f"[{ticker}] AUM={val:,.0f} (from v7 quote)")
-                return float(val)
-            log.info(f"[{ticker}] v7 keys: {[k for k in r2.keys() if 'asset' in k.lower() or 'nav' in k.lower() or 'fund' in k.lower()]}, all: {list(r2.keys())}")
-    except Exception as e:
-        log.warning(f"[{ticker}] v7 quote 오류: {e}")
-
-    log.warning(f"[{ticker}] AUM 수집 실패")
+        log.warning(f"[{ticker}] AUM 오류: {e}")
     return None
 
 
