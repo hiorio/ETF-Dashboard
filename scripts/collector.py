@@ -437,8 +437,7 @@ def main():
 
             if nav_kr is not None:
                 # pykrx 성공: NAV 데이터는 pykrx, 나머지 기간수익률은 Yahoo에서 보완
-                d = collect_via_yahoo_api(f"{code}.KS", etf["listed_date"], cycle, yf_session, yf_crumb) \
-                    if code.isdigit() else {}
+                d = collect_via_yahoo_api(f"{code}.KS", etf["listed_date"], cycle, yf_session, yf_crumb)
                 d["nav_current"]              = nav_kr
                 d["nav_change_1y"]            = chg1y_kr
                 d["nav_change_since_listing"] = chgsince_kr
@@ -447,17 +446,14 @@ def main():
                     d["dist_rate_12m"]        = round(d12, 2)
                     d["dist_rate_annualized"] = round(dann, 2)
                     d["dist_rate_monthly"]    = round(dists_kr[0] / nav_kr * 100, 2)
-            elif code.isdigit():
+            else:
                 log.info(f"[{code}] pykrx 실패 → Yahoo Finance {code}.KS 폴백")
                 d = collect_via_yahoo_api(f"{code}.KS", etf["listed_date"], cycle, yf_session, yf_crumb)
-            else:
-                log.warning(f"[{code}] 신형 코드 — 데이터 없음")
-                d = {}
         else:
             d = collect_via_yahoo_api(code, etf["listed_date"], cycle, yf_session, yf_crumb)
 
         # AUM 수집
-        yf_ticker = f"{code}.KS" if country == "KR" and code.isdigit() else code
+        yf_ticker = f"{code}.KS" if country == "KR" else code
         aum = _get_aum(yf_ticker, yf_session, yf_crumb) if d.get("nav_current") else None
 
         real_return_1y = None
