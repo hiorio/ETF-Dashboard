@@ -73,7 +73,7 @@ def load_data():
             w.nav_change_1y, w.nav_change_since_listing,
             w.return_1m, w.return_3m, w.return_6m,
             w.dist_rate_12m, w.dist_rate_monthly, w.dist_rate_annualized,
-            w.real_return_1y,
+            w.real_return_1y, w.nav_per_share,
             m.name, m.country, m.strategy, m.dividend_cycle, m.dividend_timing,
             m.manager, m.listed_date
         FROM etf_weekly w
@@ -109,11 +109,17 @@ def load_data():
     for r in monthly_dist_rows:
         monthly_dists.setdefault(r["code"], {})[r["year_month"]] = r["amount"]
 
+    # 상장이후 누적 분배금 합계 {code: total_amount}
+    all_dists = conn.execute("""
+        SELECT code, SUM(amount) as total FROM etf_monthly_dist GROUP BY code
+    """).fetchall()
+    total_dist_since_listing = {r["code"]: r["total"] for r in all_dists}
+
     conn.close()
-    return [dict(r) for r in rows], [dict(r) for r in history], monthly_dists
+    return [dict(r) for r in rows], [dict(r) for r in history], monthly_dists, total_dist_since_listing
 
 
-def build_html(rows, history, monthly_dists):
+def build_html(rows, history, monthly_dists, total_dist_since_listing):
     updated = rows[0]["collected_at"] if rows else "데이터 없음"
     now = datetime.now().strftime("%Y-%m-%d %H:%M KST")
 
@@ -157,14 +163,47 @@ def build_html(rows, history, monthly_dists):
         timing_str = f" {timing}" if timing else ""
         cycle_badge = f'<span class="badge cycle">{cycle}배당{timing_str}</span>'
 
-        nav_disp = nav_fmt(r["nav_current"], country)
+        nav_disp  = nav_fmt(r["nav_current"], country)
         prev_disp = nav_fmt(r["price_prev"], country)
         change_disp = nav_fmt(r["price_change"], country) if r["price_change"] is not None else "-"
         change_pct = pct(r.get("price_change_pct"))
         change_pct_cls = color_class(r.get("price_change_pct"))
+        aum_disp  = aum_fmt(r.get("aum"), country)
+        listed    = r.get("listed_date") or "-"
 
-        aum_disp = aum_fmt(r.get("aum"), country)
-        listed = r.get("listed_date") or "-"
+        # 순자산가치(NAV per share) — KR ETF만
+        nav_ps = r.get("nav_per_share")
+        nav_ps_disp = nav_fmt(nav_ps, country) if nav_ps else "-"
+        # 프리미엄/할인: (가격 - NAV) / NAV * 100
+        price_now = r.get("nav_current")
+        if nav_ps and price_now:
+            pd_val  = round((price_now - nav_ps) / nav_ps * 100, 2)
+            pd_disp = f'<span class="{color_class(pd_val)}">{pct(pd_val)}</span>'
+        else:
+            pd_disp = "-"
+
+        # 상장이후 NAV 변화
+        chg_since = r.get("nav_change_since_listing")
+        chg_since_cls = color_class(chg_since)
+
+        # 상장이후 누적 분배금 비율
+        total_dist = total_dist_since_listing.get(code)
+        listed_price = None
+        if price_now and chg_since is not None:
+            try:
+                listed_price = price_now / (1 + chg_since / 100)
+            except ZeroDivisionError:
+                pass
+        total_dist_rate = round(total_dist / listed_price * 100, 1) if (total_dist and listed_price) else None
+
+        # 상장이후 총수익률 = NAV변화 + 누적분배율
+        total_ret = round(chg_since + total_dist_rate, 1) if (chg_since is not None and total_dist_rate is not None) else None
+        total_ret_cls = color_class(total_ret)
+
+        # 자본침식 경보: 상장이후 NAV -5% 이하이면서 분배금은 지급
+        erosion_badge = ""
+        if chg_since is not None and chg_since <= -5 and total_dist_rate:
+            erosion_badge = '<span class="badge erosion">⚠ 자본침식</span>'
 
         def td_pct(val):
             cls = color_class(val)
@@ -175,13 +214,12 @@ def build_html(rows, history, monthly_dists):
 
         real_val = r["real_return_1y"]
         real_cls = color_class(real_val)
-        real_disp = pct(real_val)
 
         return f"""
         <tr>
           <td class="name-cell">
             <div class="etf-name">{r['name']}</div>
-            <div class="etf-sub">{country_badge} {cycle_badge} {r.get('manager','')}</div>
+            <div class="etf-sub">{country_badge} {cycle_badge} {r.get('manager','')} {erosion_badge}</div>
           </td>
           <td>{nav_disp}</td>
           <td>{prev_disp}</td>
@@ -192,14 +230,17 @@ def build_html(rows, history, monthly_dists):
           {td_pct(r.get('return_3m'))}
           {td_pct(r.get('return_6m'))}
           {td_pct(r.get('nav_change_1y'))}
+          <td class="{chg_since_cls}">{pct(chg_since)}</td>
+          <td class="{total_ret_cls}"><strong>{pct(total_ret)}</strong></td>
+          <td>{nav_ps_disp}<br><span class="sub-val">{pd_disp}</span></td>
           {td_pct_neutral(r.get('dist_rate_monthly'))}
           {td_pct_neutral(r.get('dist_rate_12m'))}
           {td_pct_neutral(r.get('dist_rate_annualized'))}
-          <td class="real-return {real_cls}"><strong>{real_disp}</strong></td>
+          <td class="real-return {real_cls}"><strong>{pct(real_val)}</strong></td>
         </tr>"""
 
     table_rows = "\n".join(row_html(r) for r in rows) if rows else (
-        '<tr><td colspan="14" class="no-data">아직 수집된 데이터가 없습니다.<br>'
+        '<tr><td colspan="17" class="no-data">아직 수집된 데이터가 없습니다.<br>'
         'GitHub Actions에서 워크플로우를 실행해 주세요.</td></tr>'
     )
 
@@ -351,6 +392,7 @@ def build_html(rows, history, monthly_dists):
   .badge.kr {{ background: #1e3a5f; color: #60a5fa; }}
   .badge.us {{ background: #3b1f1f; color: #f87171; }}
   .badge.cycle {{ background: #1f2d1f; color: #86efac; }}
+  .badge.erosion {{ background: #3b1a1a; color: #fca5a5; }}
   .no-data {{
     text-align: center !important;
     padding: 40px !important;
@@ -412,6 +454,9 @@ def build_html(rows, history, monthly_dists):
           <th>3M 수익률</th>
           <th>6M 수익률</th>
           <th>1Y 수익률</th>
+          <th>상장이후 NAV</th>
+          <th>상장이후 총수익률 ★★</th>
+          <th>순자산가치<br><span style="font-weight:400;font-size:0.7rem">(프리미엄)</span></th>
           <th>월분배율</th>
           <th>분배율 12M</th>
           <th>분배율 연환산</th>
@@ -424,7 +469,9 @@ def build_html(rows, history, monthly_dists):
     </table>
   </div>
   <p style="color:var(--muted);font-size:0.75rem;margin-top:8px;">
-    ★ 실질수익률 1Y = 분배율 12M + NAV 변화율 1Y &nbsp;|&nbsp; 1M/3M/6M/1Y = 기간별 가격 수익률
+    ★ 실질수익률 1Y = 분배율 12M + 1Y 수익률 &nbsp;|&nbsp;
+    ★★ 상장이후 총수익률 = 상장이후 NAV변화 + 상장이후 누적분배율 &nbsp;|&nbsp;
+    ⚠ 자본침식 = 상장이후 NAV -5% 이하이면서 분배금 지급 중
   </p>
 
   <div class="section-title">💰 월별 분배금 이력 (직전 1년)</div>
@@ -595,9 +642,9 @@ DATA.datasets.forEach((ds, idx) => {{
 
 def main():
     DOCS_DIR.mkdir(exist_ok=True)
-    rows, history, monthly_dists = load_data()
+    rows, history, monthly_dists, total_dist_since_listing = load_data()
 
-    html = build_html(rows, history, monthly_dists)
+    html = build_html(rows, history, monthly_dists, total_dist_since_listing)
     OUT_PATH.write_text(html, encoding="utf-8")
 
     print(f"리포트 생성 완료: {OUT_PATH}")

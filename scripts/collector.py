@@ -41,6 +41,7 @@ _MIGRATIONS = [
     "ALTER TABLE etf_weekly ADD COLUMN return_1m REAL",
     "ALTER TABLE etf_weekly ADD COLUMN return_3m REAL",
     "ALTER TABLE etf_weekly ADD COLUMN return_6m REAL",
+    "ALTER TABLE etf_weekly ADD COLUMN nav_per_share REAL",
 ]
 
 
@@ -83,6 +84,7 @@ def init_db(conn):
             dist_rate_monthly        REAL,
             dist_rate_annualized     REAL,
             real_return_1y           REAL,
+            nav_per_share            REAL,
             UNIQUE(code, collected_at)
         );
 
@@ -127,6 +129,50 @@ def save_monthly_dists(conn, code, monthly_dists):
             (code, ym, amount),
         )
     conn.commit()
+
+
+# ── 네이버 금융 API (KR ETF AUM + 순자산가치) ──────────────────────────────
+
+def _get_naver_etf(code):
+    """네이버 금융 API로 KR ETF 시가총액 + 순자산가치/주 수집"""
+    try:
+        url = f"https://m.stock.naver.com/api/stock/{code}/basic"
+        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        log.info(f"[{code}] Naver API {res.status_code}")
+        if res.status_code != 200:
+            return None, None
+        data = res.json()
+
+        def to_float(v):
+            try:
+                return float(str(v).replace(",", "").strip()) if v not in (None, "", "-") else None
+            except (ValueError, TypeError):
+                return None
+
+        # 순자산가치(NAV per share): nav, iNav, navPrice 순으로 시도
+        nav = None
+        for f in ("nav", "iNav", "navPrice", "netAssetValue"):
+            nav = to_float(data.get(f))
+            if nav:
+                log.info(f"[{code}] NAV={nav:,.2f} (from {f})")
+                break
+
+        # 시가총액(AUM): marketCap, totalAsset, netAsset 순으로 시도
+        aum = None
+        for f in ("marketCap", "totalAsset", "fundTotalAsset", "netAsset"):
+            aum = to_float(data.get(f))
+            if aum:
+                log.info(f"[{code}] AUM={aum:,.0f} (from {f})")
+                break
+
+        if nav is None and aum is None:
+            log.info(f"[{code}] Naver 응답 keys: {list(data.keys())[:20]}")
+
+        return aum, nav
+
+    except Exception as e:
+        log.warning(f"[{code}] Naver API 오류: {e}")
+        return None, None
 
 
 # ── Yahoo Finance 세션 ─────────────────────────────────────────────────────
@@ -333,13 +379,14 @@ def main():
 
         if country == "KR":
             d = collect_via_yahoo_api(f"{code}.KS", etf["listed_date"], cycle, yf_session, yf_crumb)
+            # 네이버 금융: KR ETF AUM + 순자산가치
+            naver_aum, nav_per_share = _get_naver_etf(code)
+            aum = naver_aum
         else:
             d = collect_via_yahoo_api(code, etf["listed_date"], cycle, yf_session, yf_crumb)
-
-        # AUM 수집
-        # KR ETF는 Yahoo Finance quote 페이지 미지원(404) → US만 시도
-        yf_ticker = None if country == "KR" else code
-        aum = _get_aum(yf_ticker, yf_session, yf_crumb) if (yf_ticker and d.get("nav_current")) else None
+            # US ETF AUM: Yahoo Finance HTML 파싱
+            aum = _get_aum(code, yf_session, yf_crumb) if d.get("nav_current") else None
+            nav_per_share = None  # US ETF는 가격 ≈ NAV
 
         real_return_1y = None
         if d.get("dist_rate_12m") is not None and d.get("nav_change_1y") is not None:
@@ -353,8 +400,8 @@ def main():
                  nav_change_1y, nav_change_since_listing,
                  return_1m, return_3m, return_6m,
                  dist_rate_12m, dist_rate_monthly, dist_rate_annualized,
-                 real_return_1y)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 real_return_1y, nav_per_share)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 code, collected_at,
@@ -364,7 +411,7 @@ def main():
                 d.get("nav_change_1y"), d.get("nav_change_since_listing"),
                 d.get("return_1m"),     d.get("return_3m"),     d.get("return_6m"),
                 d.get("dist_rate_12m"), d.get("dist_rate_monthly"), d.get("dist_rate_annualized"),
-                real_return_1y,
+                real_return_1y, nav_per_share,
             ),
         )
         conn.commit()
