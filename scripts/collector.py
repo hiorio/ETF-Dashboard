@@ -262,20 +262,21 @@ def _yf_session():
 
 
 def _get_aum(ticker, session, crumb):
-    """Yahoo Finance Quote API로 AUM(시가총액) 수집"""
+    """Yahoo Finance v7 quote API로 AUM(시가총액) 수집"""
     try:
-        params = {"modules": "summaryDetail"}
+        params = {"symbols": ticker, "fields": "totalAssets,marketCap"}
         if crumb:
             params["crumb"] = crumb
-        url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
+        url = "https://query1.finance.yahoo.com/v7/finance/quote"
         res = session.get(url, params=params, timeout=10)
         data = res.json()
-        result = ((data.get("quoteSummary") or {}).get("result") or [])
+        result = (((data.get("quoteResponse") or {}).get("result")) or [])
         if result:
-            assets = ((result[0].get("summaryDetail") or {}).get("totalAssets") or {})
-            raw = assets.get("raw")
-            if raw:
-                return float(raw)
+            r = result[0]
+            # ETF는 totalAssets, 주식은 marketCap
+            val = r.get("totalAssets") or r.get("marketCap")
+            if val:
+                return float(val)
     except Exception as e:
         log.warning(f"[{ticker}] AUM 수집 오류: {e}")
     return None
