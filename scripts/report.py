@@ -6,7 +6,7 @@ ETF 대시보드 HTML 리포트 생성기
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
@@ -21,12 +21,35 @@ def pct(val, digits=2):
     return f"{val:+.{digits}f}%"
 
 
+def pct_plain(val, digits=2):
+    """부호 없는 퍼센트"""
+    if val is None:
+        return "-"
+    return f"{val:.{digits}f}%"
+
+
 def nav_fmt(val, country):
     if val is None:
         return "-"
     if country == "KR":
         return f"{val:,.0f}원"
     return f"${val:.2f}"
+
+
+def aum_fmt(val, country):
+    if val is None:
+        return "-"
+    if country == "KR":
+        # 원 단위 → 억원
+        awk = val / 1e8
+        if awk >= 10000:
+            return f"{awk/10000:.1f}조원"
+        return f"{awk:,.0f}억원"
+    else:
+        # USD
+        if val >= 1e9:
+            return f"${val/1e9:.1f}B"
+        return f"${val/1e6:.0f}M"
 
 
 def color_class(val):
@@ -37,7 +60,7 @@ def color_class(val):
 
 def load_data():
     if not DB_PATH.exists():
-        return [], []
+        return [], [], {}
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -46,9 +69,13 @@ def load_data():
     rows = conn.execute("""
         SELECT
             w.code, w.collected_at,
-            w.nav_current, w.nav_change_1y, w.nav_change_since_listing,
-            w.dist_rate_12m, w.dist_rate_annualized, w.real_return_1y,
-            m.name, m.country, m.strategy, m.dividend_cycle, m.dividend_timing, m.manager, m.listed_date
+            w.nav_current, w.price_prev, w.price_change, w.price_change_pct, w.aum,
+            w.nav_change_1y, w.nav_change_since_listing,
+            w.return_1m, w.return_3m, w.return_6m,
+            w.dist_rate_12m, w.dist_rate_monthly, w.dist_rate_annualized,
+            w.real_return_1y,
+            m.name, m.country, m.strategy, m.dividend_cycle, m.dividend_timing,
+            m.manager, m.listed_date
         FROM etf_weekly w
         JOIN etf_meta m ON m.code = w.code
         WHERE w.collected_at = (
@@ -67,11 +94,25 @@ def load_data():
         ORDER BY code, collected_at
     """).fetchall()
 
+    # 월별 분배금 (직전 13개월)
+    cutoff = (datetime.now() - timedelta(days=395)).strftime("%Y-%m")
+    monthly_dist_rows = conn.execute("""
+        SELECT code, year_month, amount
+        FROM etf_monthly_dist
+        WHERE year_month >= ?
+        ORDER BY code, year_month
+    """, (cutoff,)).fetchall()
+
+    # {code: {year_month: amount}}
+    monthly_dists = {}
+    for r in monthly_dist_rows:
+        monthly_dists.setdefault(r["code"], {})[r["year_month"]] = r["amount"]
+
     conn.close()
-    return [dict(r) for r in rows], [dict(r) for r in history]
+    return [dict(r) for r in rows], [dict(r) for r in history], monthly_dists
 
 
-def build_html(rows, history):
+def build_html(rows, history, monthly_dists):
     updated = rows[0]["collected_at"] if rows else "데이터 없음"
     now = datetime.now().strftime("%Y-%m-%d %H:%M KST")
 
@@ -104,21 +145,32 @@ def build_html(rows, history):
     # ── 테이블 행 ──────────────────────────────────────
     def row_html(r):
         code = r["code"]
+        country = r["country"]
         country_badge = (
             '<span class="badge kr">KR</span>'
-            if r["country"] == "KR"
+            if country == "KR"
             else '<span class="badge us">US</span>'
         )
         cycle = r.get("dividend_cycle", "-")
         timing = r.get("dividend_timing") or ""
         timing_str = f" {timing}" if timing else ""
         cycle_badge = f'<span class="badge cycle">{cycle}배당{timing_str}</span>'
-        nav_disp = nav_fmt(r["nav_current"], r["country"])
 
-        def td(val, cls_fn=color_class):
-            v = pct(val)
-            cls = cls_fn(val)
-            return f'<td class="{cls}">{v}</td>'
+        nav_disp = nav_fmt(r["nav_current"], country)
+        prev_disp = nav_fmt(r["price_prev"], country)
+        change_disp = nav_fmt(r["price_change"], country) if r["price_change"] is not None else "-"
+        change_pct = pct(r.get("price_change_pct"))
+        change_pct_cls = color_class(r.get("price_change_pct"))
+
+        aum_disp = aum_fmt(r.get("aum"), country)
+        listed = r.get("listed_date") or "-"
+
+        def td_pct(val):
+            cls = color_class(val)
+            return f'<td class="{cls}">{pct(val)}</td>'
+
+        def td_pct_neutral(val):
+            return f'<td class="neutral">{pct_plain(val)}</td>'
 
         real_val = r["real_return_1y"]
         real_cls = color_class(real_val)
@@ -131,17 +183,79 @@ def build_html(rows, history):
             <div class="etf-sub">{country_badge} {cycle_badge} {r.get('manager','')}</div>
           </td>
           <td>{nav_disp}</td>
-          {td(r['nav_change_1y'])}
-          {td(r['nav_change_since_listing'])}
-          {td(r['dist_rate_12m'], lambda v: 'neutral')}
-          {td(r['dist_rate_annualized'], lambda v: 'neutral')}
+          <td>{prev_disp}</td>
+          <td class="{change_pct_cls}">{change_disp}<br><span class="sub-val">{change_pct}</span></td>
+          <td>{aum_disp}</td>
+          <td class="muted-cell">{listed}</td>
+          {td_pct(r.get('return_1m'))}
+          {td_pct(r.get('return_3m'))}
+          {td_pct(r.get('return_6m'))}
+          {td_pct(r.get('nav_change_1y'))}
+          {td_pct_neutral(r.get('dist_rate_monthly'))}
+          {td_pct_neutral(r.get('dist_rate_12m'))}
+          {td_pct_neutral(r.get('dist_rate_annualized'))}
           <td class="real-return {real_cls}"><strong>{real_disp}</strong></td>
         </tr>"""
 
     table_rows = "\n".join(row_html(r) for r in rows) if rows else (
-        '<tr><td colspan="7" class="no-data">아직 수집된 데이터가 없습니다.<br>'
+        '<tr><td colspan="14" class="no-data">아직 수집된 데이터가 없습니다.<br>'
         'GitHub Actions에서 워크플로우를 실행해 주세요.</td></tr>'
     )
+
+    # ── 월별 분배금 섹션 ────────────────────────────────
+    def dist_section_html():
+        if not monthly_dists:
+            return '<p class="muted-note">월별 분배금 데이터 없음</p>'
+
+        # 공통 연월 레이블 (최근 13개월)
+        all_months = sorted({ym for code_data in monthly_dists.values() for ym in code_data})
+        if not all_months:
+            return '<p class="muted-note">월별 분배금 데이터 없음</p>'
+
+        # 테이블 헤더
+        month_headers = "".join(f'<th>{m[5:]}</th>' for m in all_months)
+
+        # 각 ETF 행
+        country_map = {r["code"]: r["country"] for r in rows}
+        name_map    = {r["code"]: r["name"]    for r in rows}
+
+        dist_rows = []
+        for r in rows:
+            code = r["code"]
+            country = r.get("country", "KR")
+            dmap = monthly_dists.get(code, {})
+            cells = []
+            for ym in all_months:
+                amt = dmap.get(ym)
+                if amt is None:
+                    cells.append('<td class="neutral">-</td>')
+                else:
+                    if country == "KR":
+                        cells.append(f'<td class="dist-amt">{amt:,.0f}원</td>')
+                    else:
+                        cells.append(f'<td class="dist-amt">${amt:.4f}</td>')
+            dist_rows.append(
+                f'<tr><td class="name-cell-sm">{name_map.get(code, code)}</td>{"".join(cells)}</tr>'
+            )
+
+        dist_rows_html = "\n".join(dist_rows)
+        return f"""
+        <div class="table-wrap">
+          <table class="dist-table">
+            <thead>
+              <tr>
+                <th style="text-align:left">ETF</th>
+                {month_headers}
+              </tr>
+            </thead>
+            <tbody>
+              {dist_rows_html}
+            </tbody>
+          </table>
+        </div>
+        """
+
+    dist_section = dist_section_html()
 
     chart_json = json.dumps(chart_data, ensure_ascii=False)
 
@@ -179,7 +293,7 @@ def build_html(rows, history):
   }}
   .header h1 {{ font-size: 1.6rem; font-weight: 700; color: var(--acc); }}
   .header p {{ color: var(--muted); margin-top: 4px; font-size: 0.85rem; }}
-  .container {{ max-width: 1100px; margin: 0 auto; padding: 20px 16px; }}
+  .container {{ max-width: 1200px; margin: 0 auto; padding: 20px 16px; }}
   .section-title {{
     font-size: 0.9rem;
     font-weight: 600;
@@ -199,29 +313,32 @@ def build_html(rows, history):
   }}
   thead tr {{ background: #21253a; }}
   th {{
-    padding: 10px 14px;
+    padding: 10px 12px;
     text-align: right;
     font-weight: 600;
     color: var(--muted);
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     white-space: nowrap;
   }}
   th:first-child {{ text-align: left; }}
   td {{
-    padding: 12px 14px;
+    padding: 11px 12px;
     text-align: right;
     border-top: 1px solid var(--border);
     white-space: nowrap;
+    font-size: 0.85rem;
   }}
   td:first-child {{ text-align: left; }}
   tr:hover td {{ background: rgba(79,142,247,0.04); }}
   .pos {{ color: var(--pos); }}
   .neg {{ color: var(--neg); }}
   .neutral {{ color: var(--text); }}
-  .real-return {{ font-size: 1rem; }}
+  .muted-cell {{ color: var(--muted); font-size: 0.8rem; }}
+  .sub-val {{ font-size: 0.75rem; opacity: 0.85; }}
+  .real-return {{ font-size: 0.95rem; }}
   .real-return.pos {{ color: #22c55e; }}
   .real-return.neg {{ color: #ef4444; }}
-  .etf-name {{ font-weight: 500; font-size: 0.9rem; }}
+  .etf-name {{ font-weight: 500; font-size: 0.88rem; }}
   .etf-sub {{ margin-top: 3px; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }}
   .badge {{
     display: inline-block;
@@ -239,6 +356,11 @@ def build_html(rows, history):
     color: var(--muted);
     line-height: 2;
   }}
+  /* ── 월별 분배금 테이블 ── */
+  .dist-table th, .dist-table td {{ padding: 8px 10px; font-size: 0.8rem; }}
+  .dist-amt {{ color: #fbbf24; }}
+  .name-cell-sm {{ text-align: left; font-size: 0.8rem; color: var(--text); max-width: 220px; white-space: normal; }}
+  .muted-note {{ color: var(--muted); font-size: 0.85rem; padding: 12px 0; }}
   /* ── 차트 ── */
   .charts {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
   @media (max-width: 680px) {{ .charts {{ grid-template-columns: 1fr; }} }}
@@ -280,9 +402,16 @@ def build_html(rows, history):
       <thead>
         <tr>
           <th>ETF</th>
-          <th>NAV 현재</th>
-          <th>NAV 변화율 1Y</th>
-          <th>NAV 변화율 상장이후</th>
+          <th>현재가</th>
+          <th>전일가</th>
+          <th>등락</th>
+          <th>시가총액</th>
+          <th>상장일</th>
+          <th>1M</th>
+          <th>3M</th>
+          <th>6M</th>
+          <th>1Y NAV</th>
+          <th>월분배율</th>
           <th>분배율 12M</th>
           <th>분배율 연환산</th>
           <th>실질수익률 1Y ★</th>
@@ -294,8 +423,11 @@ def build_html(rows, history):
     </table>
   </div>
   <p style="color:var(--muted);font-size:0.75rem;margin-top:8px;">
-    ★ 실질수익률 1Y = 분배율 12M + NAV 변화율 1Y
+    ★ 실질수익률 1Y = 분배율 12M + NAV 변화율 1Y &nbsp;|&nbsp; 1M/3M/6M/1Y = 기간별 가격 수익률
   </p>
+
+  <div class="section-title">💰 월별 분배금 이력 (직전 1년)</div>
+  {dist_section}
 
   <div class="section-title">📈 추이 차트 (최근 12주)</div>
   <div class="charts">
@@ -320,7 +452,7 @@ def build_html(rows, history):
 </div>
 
 <footer>
-  데이터 출처: KRX, pykrx, yfinance &nbsp;|&nbsp;
+  데이터 출처: KRX, pykrx, Yahoo Finance &nbsp;|&nbsp;
   매주 월요일 자동 업데이트 &nbsp;|&nbsp;
   <a href="https://github.com/hiorio/ETF-Dashboard" style="color:var(--acc)">GitHub</a>
 </footer>
@@ -462,13 +594,13 @@ DATA.datasets.forEach((ds, idx) => {{
 
 def main():
     DOCS_DIR.mkdir(exist_ok=True)
-    rows, history = load_data()
+    rows, history, monthly_dists = load_data()
 
-    html = build_html(rows, history)
+    html = build_html(rows, history, monthly_dists)
     OUT_PATH.write_text(html, encoding="utf-8")
 
     print(f"리포트 생성 완료: {OUT_PATH}")
-    print(f"  ETF {len(rows)}개  이력 {len(history)}행")
+    print(f"  ETF {len(rows)}개  이력 {len(history)}행  월별분배금 {sum(len(v) for v in monthly_dists.values())}건")
 
 
 if __name__ == "__main__":
