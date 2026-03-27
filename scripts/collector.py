@@ -221,64 +221,121 @@ def calc_dist_rates(distributions, nav_current, dividend_cycle):
     return dist_rate_12m, dist_rate_ann
 
 
-# ── yfinance 공통 수집 (US 티커 / KR .KS 티커) ────────────────────────────
+# ── Yahoo Finance 직접 API ─────────────────────────────────────────────────
 
-def collect_via_yfinance(ticker, listed_date, dividend_cycle="월"):
-    """yfinance로 NAV + 분배금 수집
+def _yf_session():
+    """Yahoo Finance 쿠키 + crumb 세션 초기화"""
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://finance.yahoo.com",
+    })
+    # 쿠키 획득 (인증 필요 시)
+    try:
+        session.get("https://finance.yahoo.com/", timeout=10)
+    except Exception:
+        pass
+    # crumb 획득
+    crumb = None
+    try:
+        r = session.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=10)
+        if r.status_code == 200 and r.text:
+            crumb = r.text.strip()
+    except Exception:
+        pass
+    return session, crumb
+
+
+def collect_via_yahoo_api(ticker, listed_date, dividend_cycle="월"):
+    """Yahoo Finance Chart API로 가격 이력 + 분배금 수집
     → (nav_current, change_1y%, change_since%, dist_rate_12m%, dist_rate_ann%)
     """
     try:
-        import yfinance as yf
+        import pandas as pd
 
-        etf = yf.Ticker(ticker)
         listing_dt = datetime.strptime(listed_date, "%Y-%m-%d")
+        one_year_ago_dt = datetime.now() - timedelta(days=365)
+        start_ts = int(listing_dt.timestamp())
+        end_ts   = int(datetime.now().timestamp())
 
-        hist = etf.history(start=listing_dt.strftime("%Y-%m-%d"), auto_adjust=True)
-        if hist.empty:
-            log.warning(f"[{ticker}] yfinance 이력 없음")
+        session, crumb = _yf_session()
+
+        params = {
+            "period1": start_ts,
+            "period2": end_ts,
+            "interval": "1wk",
+            "events": "dividends",
+            "includePrePost": "false",
+        }
+        if crumb:
+            params["crumb"] = crumb
+
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+        res = session.get(url, params=params, timeout=15)
+        log.info(f"[{ticker}] Yahoo API 응답 {res.status_code} ({len(res.content)} bytes)")
+
+        data = res.json()
+        chart_result = data.get("chart", {})
+        if chart_result.get("error"):
+            log.error(f"[{ticker}] Yahoo API 에러: {chart_result['error']}")
             return None, None, None, None, None
 
-        price_now = float(hist["Close"].iloc[-1])
+        results = chart_result.get("result") or []
+        if not results:
+            log.warning(f"[{ticker}] Yahoo API result 없음")
+            return None, None, None, None, None
+
+        chart    = results[0]
+        closes   = chart["indicators"]["quote"][0].get("close") or []
+        tss      = chart.get("timestamp") or []
+
+        valid = [(t, c) for t, c in zip(tss, closes) if c is not None]
+        if not valid:
+            log.warning(f"[{ticker}] 유효한 가격 데이터 없음")
+            return None, None, None, None, None
+
+        prices = pd.Series(
+            [v[1] for v in valid],
+            index=pd.to_datetime([v[0] for v in valid], unit="s"),
+        )
+
+        price_now  = float(prices.iloc[-1])
         nav_current = price_now
-        one_year_ago_dt = datetime.now() - timedelta(days=365)
 
         # 1Y 변화율
-        hist_1y = hist[hist.index >= one_year_ago_dt]
+        p1y = prices[prices.index >= one_year_ago_dt]
         change_1y = None
-        if not hist_1y.empty:
-            price_1y_ago = float(hist_1y["Close"].iloc[0])
-            if price_1y_ago:
-                change_1y = round((price_now / price_1y_ago - 1) * 100, 2)
+        if not p1y.empty and float(p1y.iloc[0]):
+            change_1y = round((price_now / float(p1y.iloc[0]) - 1) * 100, 2)
 
         # 상장이후 변화율
-        price_first = float(hist["Close"].iloc[0])
-        change_since = round((price_now / price_first - 1) * 100, 2) if price_first else None
+        p_first = float(prices.iloc[0])
+        change_since = round((price_now / p_first - 1) * 100, 2) if p_first else None
 
         # 분배금
         dist_rate_12m = dist_rate_ann = None
-        try:
-            divs = etf.dividends
-            if not divs.empty:
-                try:
-                    divs.index = divs.index.tz_localize(None)
-                except TypeError:
-                    divs.index = divs.index.tz_convert(None)
-                divs_12m = divs[divs.index >= one_year_ago_dt]
-                if not divs_12m.empty:
-                    dist_rate_12m = round(float(divs_12m.sum()) / nav_current * 100, 2)
-                    freq = CYCLE_FREQ.get(dividend_cycle, 12)
-                    dist_rate_ann = round(float(divs_12m.iloc[-1]) * freq / nav_current * 100, 2)
-        except Exception as e:
-            log.warning(f"[{ticker}] 분배금 수집 오류: {e}")
+        raw_divs = (chart.get("events") or {}).get("dividends") or {}
+        if raw_divs:
+            divs = pd.Series({
+                pd.Timestamp.fromtimestamp(int(k)): float(v["amount"])
+                for k, v in raw_divs.items()
+            }).sort_index()
+            divs_12m = divs[divs.index >= one_year_ago_dt]
+            if not divs_12m.empty:
+                dist_rate_12m = round(float(divs_12m.sum()) / nav_current * 100, 2)
+                freq = CYCLE_FREQ.get(dividend_cycle, 12)
+                dist_rate_ann = round(float(divs_12m.iloc[-1]) * freq / nav_current * 100, 2)
 
         log.info(
-            f"[{ticker}] NAV={nav_current}  1Y={change_1y}%"
-            f"  분배율12M={dist_rate_12m}%  연환산={dist_rate_ann}%"
+            f"[{ticker}] NAV={nav_current}  1Y={change_1y}%  "
+            f"분배율12M={dist_rate_12m}%  배당건수={len(raw_divs)}"
         )
         return nav_current, change_1y, change_since, dist_rate_12m, dist_rate_ann
 
     except Exception as e:
-        log.error(f"[{ticker}] yfinance 오류: {e}")
+        log.error(f"[{ticker}] Yahoo API 오류: {type(e).__name__}: {e}")
         return None, None, None, None, None
 
 
@@ -310,10 +367,10 @@ def main():
             if nav_current is None and code.isdigit():
                 log.info(f"[{code}] pykrx 실패 → Yahoo Finance {code}.KS 폴백")
                 nav_current, change_1y, change_since, dist_rate_12m, dist_rate_ann = \
-                    collect_via_yfinance(f"{code}.KS", etf["listed_date"], etf.get("dividend_cycle", "월"))
+                    collect_via_yahoo_api(f"{code}.KS", etf["listed_date"], etf.get("dividend_cycle", "월"))
         else:
             nav_current, change_1y, change_since, dist_rate_12m, dist_rate_ann = \
-                collect_via_yfinance(code, etf["listed_date"], etf.get("dividend_cycle", "월"))
+                collect_via_yahoo_api(code, etf["listed_date"], etf.get("dividend_cycle", "월"))
 
         real_return_1y = None
         if dist_rate_12m is not None and change_1y is not None:
