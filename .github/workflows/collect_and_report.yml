@@ -2,8 +2,8 @@ name: Collect ETF Data & Update Report
 
 on:
   schedule:
-    # 매주 월요일 00:00 UTC = 09:00 KST
-    - cron: "0 0 * * 1"
+    # 매일 00:00 UTC = 09:00 KST
+    - cron: "0 0 * * *"
   workflow_dispatch:
   push:
     branches: [main]
@@ -48,5 +48,5 @@ jobs:
           git add data/etf.db docs/index.html
           # 변경사항이 있을 때만 커밋
           git diff --cached --quiet || \
-            git commit -m "chore: weekly ETF data update $(date +'%Y-%m-%d') [skip ci]"
+            git commit -m "chore: daily ETF data update $(date +'%Y-%m-%d') [skip ci]"
           git push
