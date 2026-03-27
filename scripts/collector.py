@@ -262,27 +262,50 @@ def _yf_session():
 
 
 def _get_aum(ticker, session, crumb):
-    """Yahoo Finance quoteSummary로 AUM(순자산총액) 수집"""
+    """Yahoo Finance에서 AUM(순자산총액) 수집 — 여러 경로 순차 시도"""
+    # ① quoteSummary defaultKeyStatistics / summaryDetail
     try:
         params = {"modules": "defaultKeyStatistics,summaryDetail"}
         if crumb:
             params["crumb"] = crumb
         url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
         res = session.get(url, params=params, timeout=10)
-        log.info(f"[{ticker}] AUM API {res.status_code}")
+        log.info(f"[{ticker}] quoteSummary {res.status_code}")
         data = res.json()
         results = ((data.get("quoteSummary") or {}).get("result") or [])
-        if not results:
-            return None
-        r = results[0]
-        # defaultKeyStatistics.totalAssets → summaryDetail.totalAssets 순으로 시도
-        for module in ("defaultKeyStatistics", "summaryDetail"):
-            raw = ((r.get(module) or {}).get("totalAssets") or {}).get("raw")
-            if raw:
-                log.info(f"[{ticker}] AUM={raw:,.0f} (from {module})")
-                return float(raw)
+        if results:
+            r = results[0]
+            for module in ("defaultKeyStatistics", "summaryDetail"):
+                raw = ((r.get(module) or {}).get("totalAssets") or {}).get("raw")
+                if raw:
+                    log.info(f"[{ticker}] AUM={raw:,.0f} (from {module})")
+                    return float(raw)
+            # 반환된 키 디버그
+            log.info(f"[{ticker}] quoteSummary keys: { {k: list((v or {}).keys())[:5] for k, v in results[0].items()} }")
     except Exception as e:
-        log.warning(f"[{ticker}] AUM 수집 오류: {e}")
+        log.warning(f"[{ticker}] quoteSummary 오류: {e}")
+
+    # ② v7 quote API (totalAssets 직접 필드)
+    try:
+        params2 = {"symbols": ticker}
+        if crumb:
+            params2["crumb"] = crumb
+        res2 = session.get("https://query1.finance.yahoo.com/v7/finance/quote",
+                           params=params2, timeout=10)
+        log.info(f"[{ticker}] v7 quote {res2.status_code}")
+        data2 = res2.json()
+        result2 = (((data2.get("quoteResponse") or {}).get("result")) or [])
+        if result2:
+            r2 = result2[0]
+            val = r2.get("totalAssets") or r2.get("netAssets")
+            if val:
+                log.info(f"[{ticker}] AUM={val:,.0f} (from v7 quote)")
+                return float(val)
+            log.info(f"[{ticker}] v7 keys: {list(r2.keys())}")
+    except Exception as e:
+        log.warning(f"[{ticker}] v7 quote 오류: {e}")
+
+    log.warning(f"[{ticker}] AUM 수집 실패")
     return None
 
 
