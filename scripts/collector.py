@@ -166,12 +166,13 @@ def _get_aum(ticker, session, crumb):
             log.warning(f"[{ticker}] AUM 수집 실패")
             return None
         text = res.text
-        # 페이지 내 JSON: "totalAssets":{"raw":37000000000,...}
-        m = _re.search(r'"totalAssets"\s*:\s*\{"raw"\s*:\s*([\d.E+]+)', text)
-        if m:
-            val = float(m.group(1))
-            log.info(f"[{ticker}] AUM={val:,.0f} (from HTML)")
-            return val
+        # {"fmt":"37B","raw":37000000000} 또는 {"raw":37000000000,"fmt":"37B"} 모두 처리
+        for field in ("totalAssets", "netAssets"):
+            m = _re.search(rf'"{field}"\s*:\s*\{{[^}}]*"raw"\s*:\s*([\d.eE+]+)', text)
+            if m:
+                val = float(m.group(1))
+                log.info(f"[{ticker}] AUM={val:,.0f} (from HTML {field})")
+                return val
         log.warning(f"[{ticker}] AUM 필드 없음 (HTML 파싱 실패)")
     except Exception as e:
         log.warning(f"[{ticker}] AUM 오류: {e}")
