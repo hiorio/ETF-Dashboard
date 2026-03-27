@@ -129,112 +129,6 @@ def save_monthly_dists(conn, code, monthly_dists):
     conn.commit()
 
 
-# ── KR ETF: pykrx NAV (GitHub Actions에서는 KRX IP 차단으로 실패할 수 있음) ──
-
-def collect_kr_nav(code, listed_date):
-    """pykrx로 NAV 이력 수집 → (nav_current, change_1y%, change_since%)"""
-    try:
-        from pykrx import stock
-
-        listing_yyyymmdd = listed_date.replace("-", "")
-        df = stock.get_etf_ohlcv_by_date(listing_yyyymmdd, TODAY, code)
-
-        if df is None or df.empty:
-            log.warning(f"[{code}] pykrx NAV 데이터 없음")
-            return None, None, None
-
-        nav_col = "NAV" if "NAV" in df.columns else df.columns[0]
-        nav_series = df[nav_col].dropna()
-        if nav_series.empty:
-            return None, None, None
-
-        nav_current = float(nav_series.iloc[-1])
-
-        one_year_ago_dt = datetime.now() - timedelta(days=365)
-        df_1y = df[df.index >= one_year_ago_dt]
-        change_1y = None
-        if not df_1y.empty:
-            s = df_1y[nav_col].dropna()
-            if not s.empty and float(s.iloc[0]):
-                change_1y = round((nav_current / float(s.iloc[0]) - 1) * 100, 2)
-
-        nav_first = float(nav_series.iloc[0])
-        change_since = round((nav_current / nav_first - 1) * 100, 2) if nav_first else None
-
-        log.info(f"[{code}] pykrx NAV={nav_current:,.0f}  1Y={change_1y}%")
-        return nav_current, change_1y, change_since
-
-    except Exception as e:
-        log.error(f"[{code}] pykrx NAV 오류: {e}")
-        return None, None, None
-
-
-# ── KR ETF: KRX OTP 분배금 ────────────────────────────────────────────────
-
-def collect_kr_distributions_krx(code):
-    """KRX OTP 방식으로 최근 12M 분배금 수집 → [금액, ...] (최신순)"""
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://data.krx.co.kr/",
-        }
-        otp_url = "https://data.krx.co.kr/comm/fileDn/GenerateOTP/generate.cmd"
-        otp_payload = {
-            "bld": "dbms/MDC/STAT/standard/MDCSTAT04602",
-            "isuCd": code,
-            "strtDd": ONE_YEAR_AGO,
-            "endDd": TODAY,
-            "name": "fileDown",
-            "url": "dbms/MDC/STAT/standard/MDCSTAT04602",
-        }
-        otp_res = requests.post(otp_url, data=otp_payload, headers=headers, timeout=15)
-        otp = otp_res.text.strip()
-        if not otp or len(otp) < 10:
-            return []
-
-        data_url = "https://data.krx.co.kr/comm/fileDn/download_csv/download.cmd"
-        data_res = requests.post(
-            data_url,
-            data={"code": otp},
-            headers={**headers, "Referer": otp_url},
-            timeout=15,
-        )
-        if len(data_res.content) < 50:
-            return []
-
-        import pandas as pd
-        from io import StringIO
-
-        try:
-            text = data_res.content.decode("euc-kr")
-        except UnicodeDecodeError:
-            text = data_res.content.decode("utf-8", errors="replace")
-
-        df = pd.read_csv(StringIO(text))
-        amount_col = None
-        for col in df.columns:
-            if any(kw in col for kw in ["분배금", "주당분배", "지급금액", "분배"]):
-                amount_col = col
-                break
-        if amount_col is None and len(df.columns) >= 2:
-            amount_col = df.columns[1]
-
-        if amount_col is None:
-            return []
-
-        amounts = []
-        for val in df[amount_col]:
-            try:
-                amounts.append(float(str(val).replace(",", "")))
-            except (ValueError, TypeError):
-                pass
-        return amounts
-
-    except Exception as e:
-        log.error(f"[{code}] KRX 분배금 오류: {e}")
-        return []
-
-
 # ── Yahoo Finance 세션 ─────────────────────────────────────────────────────
 
 def _yf_session():
@@ -433,24 +327,7 @@ def main():
         upsert_meta(conn, etf)
 
         if country == "KR":
-            # pykrx 시도 (KRX IP 허용 환경에서만 성공)
-            nav_kr, chg1y_kr, chgsince_kr = collect_kr_nav(code, etf["listed_date"])
-            dists_kr = collect_kr_distributions_krx(code) if nav_kr else []
-
-            if nav_kr is not None:
-                # pykrx 성공: NAV 데이터는 pykrx, 나머지 기간수익률은 Yahoo에서 보완
-                d = collect_via_yahoo_api(f"{code}.KS", etf["listed_date"], cycle, yf_session, yf_crumb)
-                d["nav_current"]              = nav_kr
-                d["nav_change_1y"]            = chg1y_kr
-                d["nav_change_since_listing"] = chgsince_kr
-                if dists_kr:
-                    d12, dann = (sum(dists_kr) / nav_kr * 100, dists_kr[0] * CYCLE_FREQ.get(cycle, 12) / nav_kr * 100)
-                    d["dist_rate_12m"]        = round(d12, 2)
-                    d["dist_rate_annualized"] = round(dann, 2)
-                    d["dist_rate_monthly"]    = round(dists_kr[0] / nav_kr * 100, 2)
-            else:
-                log.info(f"[{code}] pykrx 실패 → Yahoo Finance {code}.KS 폴백")
-                d = collect_via_yahoo_api(f"{code}.KS", etf["listed_date"], cycle, yf_session, yf_crumb)
+            d = collect_via_yahoo_api(f"{code}.KS", etf["listed_date"], cycle, yf_session, yf_crumb)
         else:
             d = collect_via_yahoo_api(code, etf["listed_date"], cycle, yf_session, yf_crumb)
 
