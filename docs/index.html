@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>배당 ETF 대시보드</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e2e8f0;
+    --muted: #8892a4;
+    --pos: #4ade80;
+    --neg: #f87171;
+    --acc: #4f8ef7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .header {
+    background: linear-gradient(135deg, #1a1d27 0%, #0f1117 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 24px 20px 20px;
+    text-align: center;
+  }
+  .header h1 { font-size: 1.6rem; font-weight: 700; color: var(--acc); }
+  .header p { color: var(--muted); margin-top: 4px; font-size: 0.85rem; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 20px 16px; }
+  .section-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 28px 0 12px;
+  }
+  /* ── 테이블 ── */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  thead tr { background: #21253a; }
+  th {
+    padding: 10px 14px;
+    text-align: right;
+    font-weight: 600;
+    color: var(--muted);
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+  th:first-child { text-align: left; }
+  td {
+    padding: 12px 14px;
+    text-align: right;
+    border-top: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  td:first-child { text-align: left; }
+  tr:hover td { background: rgba(79,142,247,0.04); }
+  .pos { color: var(--pos); }
+  .neg { color: var(--neg); }
+  .neutral { color: var(--text); }
+  .real-return { font-size: 1rem; }
+  .real-return.pos { color: #22c55e; }
+  .real-return.neg { color: #ef4444; }
+  .etf-name { font-weight: 500; font-size: 0.9rem; }
+  .etf-sub { margin-top: 3px; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+  }
+  .badge.kr { background: #1e3a5f; color: #60a5fa; }
+  .badge.us { background: #3b1f1f; color: #f87171; }
+  .badge.cycle { background: #1f2d1f; color: #86efac; }
+  .no-data {
+    text-align: center !important;
+    padding: 40px !important;
+    color: var(--muted);
+    line-height: 2;
+  }
+  /* ── 차트 ── */
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 680px) { .charts { grid-template-columns: 1fr; } }
+  .chart-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .chart-card h3 { font-size: 0.85rem; color: var(--muted); margin-bottom: 12px; }
+  canvas { width: 100% !important; }
+  /* ── 범례 ── */
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.75rem; color: var(--muted); }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  /* ── 푸터 ── */
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.75rem;
+    padding: 24px 16px;
+    border-top: 1px solid var(--border);
+    margin-top: 32px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📊 배당 ETF 대시보드</h1>
+  <p>커버드콜 ETF 옥석 가리기 · 최종 수집: 데이터 없음 · 생성: 2026-03-27 00:26 KST</p>
+</div>
+
+<div class="container">
+
+  <div class="section-title">📋 최신 지표 스냅샷 (실질수익률 기준 정렬)</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ETF</th>
+          <th>NAV 현재</th>
+          <th>NAV 변화율 1Y</th>
+          <th>NAV 변화율 상장이후</th>
+          <th>분배율 12M</th>
+          <th>분배율 연환산</th>
+          <th>실질수익률 1Y ★</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td colspan="7" class="no-data">아직 수집된 데이터가 없습니다.<br>GitHub Actions에서 워크플로우를 실행해 주세요.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="color:var(--muted);font-size:0.75rem;margin-top:8px;">
+    ★ 실질수익률 1Y = 분배율 12M + NAV 변화율 1Y
+  </p>
+
+  <div class="section-title">📈 추이 차트 (최근 12주)</div>
+  <div class="charts">
+    <div class="chart-card">
+      <h3>실질수익률 1Y (%)</h3>
+      <canvas id="chartReal" height="200"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>분배율 12M (%)</h3>
+      <canvas id="chartDist" height="200"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>NAV 변화율 1Y (%)</h3>
+      <canvas id="chartNav" height="200"></canvas>
+    </div>
+    <div class="chart-card" style="display:flex;flex-direction:column;justify-content:center;align-items:center;padding:24px;">
+      <h3 style="margin-bottom:16px;">범례</h3>
+      <div class="legend" id="legend"></div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  데이터 출처: KRX, pykrx, yfinance &nbsp;|&nbsp;
+  매주 월요일 자동 업데이트 &nbsp;|&nbsp;
+  <a href="https://github.com/hiorio/ETF-Dashboard" style="color:var(--acc)">GitHub</a>
+</footer>
+
+<script>
+const DATA = {"labels": [], "datasets": []};
+
+const PALETTE = ["#4f8ef7", "#f7874f", "#4fc98e", "#f74f7e", "#b04ff7", "#f7c94f"];
+
+function drawChart(canvasId, field, yLabel) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.parentElement.clientWidth - 32;
+  const H = 200;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+
+  const labels = DATA.labels;
+  const datasets = DATA.datasets;
+  if (!labels.length) {
+    ctx.fillStyle = '#8892a4';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('데이터 없음', W/2, H/2);
+    return;
+  }
+
+  // 값 범위 계산
+  let allVals = [];
+  datasets.forEach(ds => ds[field].forEach(v => { if (v !== null) allVals.push(v); }));
+  if (!allVals.length) {
+    ctx.fillStyle = '#8892a4';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('데이터 없음', W/2, H/2);
+    return;
+  }
+  const minV = Math.min(...allVals);
+  const maxV = Math.max(...allVals);
+  const pad = (maxV - minV) * 0.15 || 1;
+  const yMin = minV - pad;
+  const yMax = maxV + pad;
+
+  const padL = 42, padR = 12, padT = 12, padB = 36;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  const xOf = i => padL + (labels.length > 1 ? i / (labels.length - 1) * plotW : plotW / 2);
+  const yOf = v => padT + (1 - (v - yMin) / (yMax - yMin)) * plotH;
+
+  // 배경
+  ctx.fillStyle = '#1a1d27';
+  ctx.fillRect(0, 0, W, H);
+
+  // 그리드 + y축 레이블
+  ctx.strokeStyle = '#2a2d3a';
+  ctx.lineWidth = 1;
+  const ticks = 4;
+  for (let i = 0; i <= ticks; i++) {
+    const v = yMin + (yMax - yMin) * i / ticks;
+    const y = yOf(v);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.fillStyle = '#8892a4';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(v.toFixed(1), padL - 4, y + 3);
+  }
+
+  // 제로선
+  if (yMin < 0 && yMax > 0) {
+    const y0 = yOf(0);
+    ctx.strokeStyle = '#3a4050';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(padL, y0); ctx.lineTo(W - padR, y0); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // 데이터 선
+  datasets.forEach((ds, idx) => {
+    const color = PALETTE[idx % PALETTE.length];
+    const vals = ds[field];
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    let started = false;
+    vals.forEach((v, i) => {
+      if (v === null) { started = false; return; }
+      const x = xOf(i), y = yOf(v);
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    // 점
+    vals.forEach((v, i) => {
+      if (v === null) return;
+      ctx.beginPath();
+      ctx.arc(xOf(i), yOf(v), 3, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+    });
+  });
+
+  // x축 레이블 (첫/마지막만)
+  if (labels.length >= 2) {
+    ctx.fillStyle = '#8892a4';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(labels[0].slice(5), padL, H - 6);
+    ctx.textAlign = 'right';
+    ctx.fillText(labels[labels.length-1].slice(5), W - padR, H - 6);
+  }
+}
+
+drawChart('chartReal', 'real_return_1y');
+drawChart('chartDist', 'dist_rate_12m');
+drawChart('chartNav', 'nav_change_1y');
+
+// 범례
+const legend = document.getElementById('legend');
+DATA.datasets.forEach((ds, idx) => {
+  const color = PALETTE[idx % PALETTE.length];
+  const item = document.createElement('div');
+  item.className = 'legend-item';
+  item.innerHTML = `<span class="legend-dot" style="background:${color}"></span>${ds.label}`;
+  legend.appendChild(item);
+});
+</script>
+
+</body>
+</html>
