@@ -1,0 +1,28 @@
+name: Test ETF Data Sources
+
+on:
+  push:
+    branches: [ "claude/test-etf-data-sources-wBLhS" ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run data source tests
+        run: python scripts/test_sources.py
+        # 실패해도 계속 진행 (어떤 소스가 되고 안 되는지 확인이 목적)
+        continue-on-error: true
