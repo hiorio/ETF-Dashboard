@@ -1,6 +1,1 @@
-yfinance==0.2.38
-requests==2.31.0
-pandas==2.2.2
-lxml==5.2.1
-beautifulsoup4==4.12.3
-pykrx==1.0.47
+eWZpbmFuY2U9PTAuMi4zOApyZXF1ZXN0cz09Mi4zMS4wCnBhbmRhcz09Mi4yLjIKbHhtbD09NS4yLjEKYmVhdXRpZnVsc291cDQ9PTQuMTIuMwpweWtyeD09MS4wLjQ3Cg==
