@@ -214,7 +214,7 @@ def build_html(rows, history, monthly_dists):
             return '<p class="muted-note">월별 분배금 데이터 없음</p>'
 
         # 테이블 헤더
-        month_headers = "".join(f'<th>{m[5:]}</th>' for m in all_months)
+        month_headers = "".join(f'<th>{int(m[5:])}월</th>' for m in all_months)
 
         # 각 ETF 행
         country_map = {r["code"]: r["country"] for r in rows}

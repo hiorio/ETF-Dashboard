@@ -280,8 +280,9 @@ def _get_aum(ticker, session, crumb):
                 if raw:
                     log.info(f"[{ticker}] AUM={raw:,.0f} (from {module})")
                     return float(raw)
-            # 반환된 키 디버그
-            log.info(f"[{ticker}] quoteSummary keys: { {k: list((v or {}).keys())[:5] for k, v in results[0].items()} }")
+            # 원본 응답 로그 (첫 600자)
+            import json as _json
+            log.info(f"[{ticker}] quoteSummary raw: {_json.dumps(results[0])[:600]}")
     except Exception as e:
         log.warning(f"[{ticker}] quoteSummary 오류: {e}")
 
@@ -301,7 +302,7 @@ def _get_aum(ticker, session, crumb):
             if val:
                 log.info(f"[{ticker}] AUM={val:,.0f} (from v7 quote)")
                 return float(val)
-            log.info(f"[{ticker}] v7 keys: {list(r2.keys())}")
+            log.info(f"[{ticker}] v7 keys: {[k for k in r2.keys() if 'asset' in k.lower() or 'nav' in k.lower() or 'fund' in k.lower()]}, all: {list(r2.keys())}")
     except Exception as e:
         log.warning(f"[{ticker}] v7 quote 오류: {e}")
 
