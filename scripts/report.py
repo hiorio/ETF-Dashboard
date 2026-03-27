@@ -408,10 +408,10 @@ def build_html(rows, history, monthly_dists):
           <th>등락</th>
           <th>시가총액</th>
           <th>상장일</th>
-          <th>1M</th>
-          <th>3M</th>
-          <th>6M</th>
-          <th>1Y NAV</th>
+          <th>1M 수익률</th>
+          <th>3M 수익률</th>
+          <th>6M 수익률</th>
+          <th>1Y 수익률</th>
           <th>월분배율</th>
           <th>분배율 12M</th>
           <th>분배율 연환산</th>
