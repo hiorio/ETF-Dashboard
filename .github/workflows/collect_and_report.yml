@@ -5,6 +5,14 @@ on:
     # 매주 월요일 00:00 UTC = 09:00 KST
     - cron: "0 0 * * 1"
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      # 코드나 ETF 목록이 변경될 때만 실행 (bot 커밋 재실행 방지)
+      - "scripts/collector.py"
+      - "scripts/report.py"
+      - "data/etf_list.json"
+      - "requirements.txt"
 
 permissions:
   contents: write
@@ -40,5 +48,5 @@ jobs:
           git add data/etf.db docs/index.html
           # 변경사항이 있을 때만 커밋
           git diff --cached --quiet || \
-            git commit -m "chore: weekly ETF data update $(date +'%Y-%m-%d')"
+            git commit -m "chore: weekly ETF data update $(date +'%Y-%m-%d') [skip ci]"
           git push
