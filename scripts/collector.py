@@ -30,15 +30,23 @@ ONE_YEAR_AGO = (datetime.now() - timedelta(days=365)).strftime("%Y%m%d")
 # ── DB 초기화 ──────────────────────────────────────────────────────────────
 
 def init_db(conn):
+    # dividend_timing 컬럼 마이그레이션 (기존 DB 대응)
+    try:
+        conn.execute("ALTER TABLE etf_meta ADD COLUMN dividend_timing TEXT")
+        conn.commit()
+    except Exception:
+        pass  # 이미 존재하면 무시
+
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS etf_meta (
-            code           TEXT PRIMARY KEY,
-            name           TEXT,
-            country        TEXT,
-            strategy       TEXT,
-            dividend_cycle TEXT,
-            manager        TEXT,
-            listed_date    TEXT
+            code              TEXT PRIMARY KEY,
+            name              TEXT,
+            country           TEXT,
+            strategy          TEXT,
+            dividend_cycle    TEXT,
+            dividend_timing   TEXT,
+            manager           TEXT,
+            listed_date       TEXT
         );
         CREATE TABLE IF NOT EXISTS etf_weekly (
             id                       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,8 +69,8 @@ def upsert_meta(conn, etf):
     conn.execute(
         """
         INSERT OR REPLACE INTO etf_meta
-            (code, name, country, strategy, dividend_cycle, manager, listed_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (code, name, country, strategy, dividend_cycle, dividend_timing, manager, listed_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             code,
@@ -70,6 +78,7 @@ def upsert_meta(conn, etf):
             etf.get("country"),
             etf.get("strategy"),
             etf.get("dividend_cycle"),
+            etf.get("dividend_timing"),
             etf.get("manager"),
             etf.get("listed_date"),
         ),

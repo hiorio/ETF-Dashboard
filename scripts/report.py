@@ -48,7 +48,7 @@ def load_data():
             w.code, w.collected_at,
             w.nav_current, w.nav_change_1y, w.nav_change_since_listing,
             w.dist_rate_12m, w.dist_rate_annualized, w.real_return_1y,
-            m.name, m.country, m.strategy, m.dividend_cycle, m.manager, m.listed_date
+            m.name, m.country, m.strategy, m.dividend_cycle, m.dividend_timing, m.manager, m.listed_date
         FROM etf_weekly w
         JOIN etf_meta m ON m.code = w.code
         WHERE w.collected_at = (
@@ -110,7 +110,9 @@ def build_html(rows, history):
             else '<span class="badge us">US</span>'
         )
         cycle = r.get("dividend_cycle", "-")
-        cycle_badge = f'<span class="badge cycle">{cycle}배당</span>'
+        timing = r.get("dividend_timing") or ""
+        timing_str = f" {timing}" if timing else ""
+        cycle_badge = f'<span class="badge cycle">{cycle}배당{timing_str}</span>'
         nav_disp = nav_fmt(r["nav_current"], r["country"])
 
         def td(val, cls_fn=color_class):
