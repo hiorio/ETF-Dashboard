@@ -221,10 +221,10 @@ def calc_dist_rates(distributions, nav_current, dividend_cycle):
     return dist_rate_12m, dist_rate_ann
 
 
-# ── US ETF: yfinance ───────────────────────────────────────────────────────
+# ── yfinance 공통 수집 (US 티커 / KR .KS 티커) ────────────────────────────
 
-def collect_us_etf(ticker, listed_date):
-    """yfinance로 미국 ETF 수집
+def collect_via_yfinance(ticker, listed_date, dividend_cycle="월"):
+    """yfinance로 NAV + 분배금 수집
     → (nav_current, change_1y%, change_since%, dist_rate_12m%, dist_rate_ann%)
     """
     try:
@@ -233,14 +233,13 @@ def collect_us_etf(ticker, listed_date):
         etf = yf.Ticker(ticker)
         listing_dt = datetime.strptime(listed_date, "%Y-%m-%d")
 
-        hist = etf.history(start=listing_dt.strftime("%Y-%m-%d"))
+        hist = etf.history(start=listing_dt.strftime("%Y-%m-%d"), auto_adjust=True)
         if hist.empty:
             log.warning(f"[{ticker}] yfinance 이력 없음")
             return None, None, None, None, None
 
         price_now = float(hist["Close"].iloc[-1])
         nav_current = price_now
-
         one_year_ago_dt = datetime.now() - timedelta(days=365)
 
         # 1Y 변화율
@@ -264,16 +263,16 @@ def collect_us_etf(ticker, listed_date):
                     divs.index = divs.index.tz_localize(None)
                 except TypeError:
                     divs.index = divs.index.tz_convert(None)
-
                 divs_12m = divs[divs.index >= one_year_ago_dt]
                 if not divs_12m.empty:
                     dist_rate_12m = round(float(divs_12m.sum()) / nav_current * 100, 2)
-                    dist_rate_ann = round(float(divs_12m.iloc[-1]) * 12 / nav_current * 100, 2)
+                    freq = CYCLE_FREQ.get(dividend_cycle, 12)
+                    dist_rate_ann = round(float(divs_12m.iloc[-1]) * freq / nav_current * 100, 2)
         except Exception as e:
             log.warning(f"[{ticker}] 분배금 수집 오류: {e}")
 
         log.info(
-            f"[{ticker}] NAV={nav_current:.2f}  1Y={change_1y}%"
+            f"[{ticker}] NAV={nav_current}  1Y={change_1y}%"
             f"  분배율12M={dist_rate_12m}%  연환산={dist_rate_ann}%"
         )
         return nav_current, change_1y, change_since, dist_rate_12m, dist_rate_ann
@@ -307,10 +306,14 @@ def main():
             dist_rate_12m, dist_rate_ann = calc_dist_rates(
                 distributions, nav_current, etf.get("dividend_cycle", "월")
             )
+            # pykrx/KRX 실패 시 Yahoo Finance .KS 폴백 (숫자 6자리 코드만)
+            if nav_current is None and code.isdigit():
+                log.info(f"[{code}] pykrx 실패 → Yahoo Finance {code}.KS 폴백")
+                nav_current, change_1y, change_since, dist_rate_12m, dist_rate_ann = \
+                    collect_via_yfinance(f"{code}.KS", etf["listed_date"], etf.get("dividend_cycle", "월"))
         else:
-            nav_current, change_1y, change_since, dist_rate_12m, dist_rate_ann = collect_us_etf(
-                code, etf["listed_date"]
-            )
+            nav_current, change_1y, change_since, dist_rate_12m, dist_rate_ann = \
+                collect_via_yfinance(code, etf["listed_date"], etf.get("dividend_cycle", "월"))
 
         real_return_1y = None
         if dist_rate_12m is not None and change_1y is not None:
