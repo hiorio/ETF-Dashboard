@@ -166,21 +166,18 @@ def _get_aum(ticker, session, crumb):
             log.warning(f"[{ticker}] AUM 수집 실패")
             return None
         text = res.text
-        # {"fmt":"37B","raw":37000000000} 또는 {"raw":37000000000,"fmt":"37B"} 모두 처리
-        for field in ("totalAssets", "netAssets", "totalNet"):
-            m = _re.search(rf'"{field}"\s*:\s*\{{[^}}]*"raw"\s*:\s*([\d.eE+]+)', text)
-            if m:
-                val = float(m.group(1))
-                log.info(f"[{ticker}] AUM={val:,.0f} (from HTML {field})")
-                return val
-        # 디버그: Assets 관련 텍스트 주변 50자 출력
-        for kw in ("totalAssets", "netAssets", "TotalAssets", "NetAssets", "totalNet"):
-            idx = text.find(kw)
+        # HTML 내 JSON이 이중 인코딩되어 따옴표가 \" 로 이스케이프됨
+        # → 필드명만 찾고, 그 뒤 80자 안에서 raw:숫자 패턴 매칭
+        for field in ("totalAssets", "netAssets"):
+            idx = text.find(field)
             if idx != -1:
-                log.info(f"[{ticker}] found '{kw}' at {idx}: ...{text[max(0,idx-10):idx+80]}...")
-                break
-        else:
-            log.warning(f"[{ticker}] AUM 필드 없음 (HTML 파싱 실패)")
+                snippet = text[idx:idx + 80]
+                m = _re.search(r'raw[^:]*:\s*(\d+)', snippet)
+                if m:
+                    val = float(m.group(1))
+                    log.info(f"[{ticker}] AUM={val:,.0f} (from HTML {field})")
+                    return val
+        log.warning(f"[{ticker}] AUM 필드 없음 (HTML 파싱 실패)")
     except Exception as e:
         log.warning(f"[{ticker}] AUM 오류: {e}")
     return None
