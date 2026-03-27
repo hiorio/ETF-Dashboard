@@ -31,7 +31,7 @@
   }
   .header h1 { font-size: 1.6rem; font-weight: 700; color: var(--acc); }
   .header p { color: var(--muted); margin-top: 4px; font-size: 0.85rem; }
-  .container { max-width: 1100px; margin: 0 auto; padding: 20px 16px; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 20px 16px; }
   .section-title {
     font-size: 0.9rem;
     font-weight: 600;
@@ -51,29 +51,32 @@
   }
   thead tr { background: #21253a; }
   th {
-    padding: 10px 14px;
+    padding: 10px 12px;
     text-align: right;
     font-weight: 600;
     color: var(--muted);
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     white-space: nowrap;
   }
   th:first-child { text-align: left; }
   td {
-    padding: 12px 14px;
+    padding: 11px 12px;
     text-align: right;
     border-top: 1px solid var(--border);
     white-space: nowrap;
+    font-size: 0.85rem;
   }
   td:first-child { text-align: left; }
   tr:hover td { background: rgba(79,142,247,0.04); }
   .pos { color: var(--pos); }
   .neg { color: var(--neg); }
   .neutral { color: var(--text); }
-  .real-return { font-size: 1rem; }
+  .muted-cell { color: var(--muted); font-size: 0.8rem; }
+  .sub-val { font-size: 0.75rem; opacity: 0.85; }
+  .real-return { font-size: 0.95rem; }
   .real-return.pos { color: #22c55e; }
   .real-return.neg { color: #ef4444; }
-  .etf-name { font-weight: 500; font-size: 0.9rem; }
+  .etf-name { font-weight: 500; font-size: 0.88rem; }
   .etf-sub { margin-top: 3px; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
   .badge {
     display: inline-block;
@@ -91,6 +94,11 @@
     color: var(--muted);
     line-height: 2;
   }
+  /* ── 월별 분배금 테이블 ── */
+  .dist-table th, .dist-table td { padding: 8px 10px; font-size: 0.8rem; }
+  .dist-amt { color: #fbbf24; }
+  .name-cell-sm { text-align: left; font-size: 0.8rem; color: var(--text); max-width: 220px; white-space: normal; }
+  .muted-note { color: var(--muted); font-size: 0.85rem; padding: 12px 0; }
   /* ── 차트 ── */
   .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   @media (max-width: 680px) { .charts { grid-template-columns: 1fr; } }
@@ -121,7 +129,7 @@
 
 <div class="header">
   <h1>📊 배당 ETF 대시보드</h1>
-  <p>커버드콜 ETF 옥석 가리기 · 최종 수집: 2026-03-27 · 생성: 2026-03-27 05:37 KST</p>
+  <p>커버드콜 ETF 옥석 가리기 · 최종 수집: 2026-03-27 · 생성: 2026-03-27 05:52 KST</p>
 </div>
 
 <div class="container">
@@ -132,9 +140,16 @@
       <thead>
         <tr>
           <th>ETF</th>
-          <th>NAV 현재</th>
-          <th>NAV 변화율 1Y</th>
-          <th>NAV 변화율 상장이후</th>
+          <th>현재가</th>
+          <th>전일가</th>
+          <th>등락</th>
+          <th>시가총액</th>
+          <th>상장일</th>
+          <th>1M</th>
+          <th>3M</th>
+          <th>6M</th>
+          <th>1Y NAV</th>
+          <th>월분배율</th>
           <th>분배율 12M</th>
           <th>분배율 연환산</th>
           <th>실질수익률 1Y ★</th>
@@ -147,12 +162,19 @@
             <div class="etf-name">KODEX 금융고배당TOP10타겟위클리커버드콜</div>
             <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge cycle">월배당 월말</span> 삼성자산운용</div>
           </td>
-          <td>13,015원</td>
-          <td class="pos">+38.83%</td>
-          <td class="pos">+32.67%</td>
-          <td class="neutral">+12.96%</td>
-          <td class="neutral">+17.43%</td>
-          <td class="real-return pos"><strong>+51.79%</strong></td>
+          <td>13,055원</td>
+          <td>12,955원</td>
+          <td class="pos">100원<br><span class="sub-val">+0.77%</span></td>
+          <td>-</td>
+          <td class="muted-cell">2024-05-14</td>
+          <td class="neg">-8.64%</td>
+          <td class="pos">+9.57%</td>
+          <td class="pos">+4.65%</td>
+          <td class="pos">+37.13%</td>
+          <td class="neutral">1.45%</td>
+          <td class="neutral">12.92%</td>
+          <td class="neutral">17.37%</td>
+          <td class="real-return pos"><strong>+50.05%</strong></td>
         </tr>
 
         <tr>
@@ -160,12 +182,19 @@
             <div class="etf-name">TIGER 미국AI빅테크10타겟데일리커버드콜</div>
             <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge cycle">월배당 월중</span> 미래에셋</div>
           </td>
-          <td>10,980원</td>
-          <td class="pos">+28.12%</td>
-          <td class="pos">+7.54%</td>
-          <td class="neutral">+15.22%</td>
-          <td class="neutral">+15.63%</td>
-          <td class="real-return pos"><strong>+43.34%</strong></td>
+          <td>10,960원</td>
+          <td>11,135원</td>
+          <td class="neg">-175원<br><span class="sub-val">-1.57%</span></td>
+          <td>-</td>
+          <td class="muted-cell">2024-04-09</td>
+          <td class="neg">-4.03%</td>
+          <td class="neg">-8.70%</td>
+          <td class="neg">-5.27%</td>
+          <td class="pos">+15.01%</td>
+          <td class="neutral">1.30%</td>
+          <td class="neutral">15.25%</td>
+          <td class="neutral">15.66%</td>
+          <td class="real-return pos"><strong>+30.26%</strong></td>
         </tr>
 
         <tr>
@@ -174,11 +203,18 @@
             <div class="etf-sub"><span class="badge us">US</span> <span class="badge cycle">월배당 월중</span> JPMorgan</div>
           </td>
           <td>$55.15</td>
-          <td class="pos">+18.35%</td>
-          <td class="pos">+12.07%</td>
-          <td class="neutral">+11.18%</td>
-          <td class="neutral">+11.08%</td>
-          <td class="real-return pos"><strong>+29.53%</strong></td>
+          <td>$56.35</td>
+          <td class="neg">$-1.20<br><span class="sub-val">-2.13%</span></td>
+          <td>-</td>
+          <td class="muted-cell">2022-05-03</td>
+          <td class="neg">-6.05%</td>
+          <td class="neg">-7.06%</td>
+          <td class="neg">-3.67%</td>
+          <td class="pos">+4.10%</td>
+          <td class="neutral">0.92%</td>
+          <td class="neutral">11.18%</td>
+          <td class="neutral">11.08%</td>
+          <td class="real-return pos"><strong>+15.28%</strong></td>
         </tr>
 
         <tr>
@@ -187,11 +223,18 @@
             <div class="etf-sub"><span class="badge us">US</span> <span class="badge cycle">월배당 월중</span> JPMorgan</div>
           </td>
           <td>$56.19</td>
-          <td class="pos">+7.77%</td>
-          <td class="pos">+12.17%</td>
-          <td class="neutral">+8.47%</td>
-          <td class="neutral">+7.50%</td>
-          <td class="real-return pos"><strong>+16.24%</strong></td>
+          <td>$56.73</td>
+          <td class="neg">$-0.54<br><span class="sub-val">-0.95%</span></td>
+          <td>-</td>
+          <td class="muted-cell">2020-05-20</td>
+          <td class="neg">-5.58%</td>
+          <td class="neg">-3.15%</td>
+          <td class="neg">-1.32%</td>
+          <td class="neg">-2.07%</td>
+          <td class="neutral">0.62%</td>
+          <td class="neutral">8.47%</td>
+          <td class="neutral">7.50%</td>
+          <td class="real-return pos"><strong>+6.40%</strong></td>
         </tr>
 
         <tr>
@@ -200,6 +243,13 @@
             <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge cycle">월배당 월중</span> 미래에셋</div>
           </td>
           <td>-</td>
+          <td>-</td>
+          <td class="neutral">-<br><span class="sub-val">-</span></td>
+          <td>-</td>
+          <td class="muted-cell">2024-02-20</td>
+          <td class="neutral">-</td>
+          <td class="neutral">-</td>
+          <td class="neutral">-</td>
           <td class="neutral">-</td>
           <td class="neutral">-</td>
           <td class="neutral">-</td>
@@ -213,6 +263,13 @@
             <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge cycle">월배당 월중</span> KB자산운용</div>
           </td>
           <td>-</td>
+          <td>-</td>
+          <td class="neutral">-<br><span class="sub-val">-</span></td>
+          <td>-</td>
+          <td class="muted-cell">2024-11-19</td>
+          <td class="neutral">-</td>
+          <td class="neutral">-</td>
+          <td class="neutral">-</td>
           <td class="neutral">-</td>
           <td class="neutral">-</td>
           <td class="neutral">-</td>
@@ -223,8 +280,30 @@
     </table>
   </div>
   <p style="color:var(--muted);font-size:0.75rem;margin-top:8px;">
-    ★ 실질수익률 1Y = 분배율 12M + NAV 변화율 1Y
+    ★ 실질수익률 1Y = 분배율 12M + NAV 변화율 1Y &nbsp;|&nbsp; 1M/3M/6M/1Y = 기간별 가격 수익률
   </p>
+
+  <div class="section-title">💰 월별 분배금 이력 (직전 1년)</div>
+  
+        <div class="table-wrap">
+          <table class="dist-table">
+            <thead>
+              <tr>
+                <th style="text-align:left">ETF</th>
+                <th>02</th><th>03</th><th>04</th><th>05</th><th>06</th><th>07</th><th>08</th><th>09</th><th>10</th><th>11</th><th>12</th><th>01</th><th>02</th><th>03</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td class="name-cell-sm">KODEX 금융고배당TOP10타겟위클리커버드콜</td><td class="dist-amt">123원</td><td class="neutral">-</td><td class="dist-amt">122원</td><td class="dist-amt">137원</td><td class="dist-amt">149원</td><td class="dist-amt">163원</td><td class="dist-amt">154원</td><td class="dist-amt">158원</td><td class="dist-amt">154원</td><td class="dist-amt">154원</td><td class="dist-amt">152원</td><td class="dist-amt">155원</td><td class="dist-amt">189원</td><td class="neutral">-</td></tr>
+<tr><td class="name-cell-sm">TIGER 미국AI빅테크10타겟데일리커버드콜</td><td class="dist-amt">139원</td><td class="dist-amt">118원</td><td class="dist-amt">115원</td><td class="dist-amt">119원</td><td class="dist-amt">121원</td><td class="dist-amt">128원</td><td class="dist-amt">138원</td><td class="dist-amt">140원</td><td class="dist-amt">150원</td><td class="dist-amt">158원</td><td class="dist-amt">157원</td><td class="dist-amt">154원</td><td class="dist-amt">148원</td><td class="dist-amt">143원</td></tr>
+<tr><td class="name-cell-sm">JPMorgan Nasdaq Equity Premium Income</td><td class="dist-amt">$0.4500</td><td class="dist-amt">$0.4820</td><td class="dist-amt">$0.5410</td><td class="dist-amt">$0.5980</td><td class="dist-amt">$0.6210</td><td class="dist-amt">$0.4940</td><td class="dist-amt">$0.4440</td><td class="dist-amt">$0.4420</td><td class="dist-amt">$0.4460</td><td class="dist-amt">$0.4760</td><td class="dist-amt">$1.1290</td><td class="neutral">-</td><td class="dist-amt">$0.4660</td><td class="dist-amt">$0.5090</td></tr>
+<tr><td class="name-cell-sm">JPMorgan Equity Premium Income</td><td class="dist-amt">$0.3260</td><td class="dist-amt">$0.3280</td><td class="dist-amt">$0.4080</td><td class="dist-amt">$0.4880</td><td class="dist-amt">$0.5400</td><td class="dist-amt">$0.4000</td><td class="dist-amt">$0.3580</td><td class="dist-amt">$0.3680</td><td class="dist-amt">$0.3610</td><td class="dist-amt">$0.3460</td><td class="dist-amt">$0.7980</td><td class="neutral">-</td><td class="dist-amt">$0.3440</td><td class="dist-amt">$0.3510</td></tr>
+<tr><td class="name-cell-sm">TIGER 미국배당다우존스타겟데일리커버드콜</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td></tr>
+<tr><td class="name-cell-sm">RISE 코리아밸류업위클리고정커버드콜</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td><td class="neutral">-</td></tr>
+            </tbody>
+          </table>
+        </div>
+        
 
   <div class="section-title">📈 추이 차트 (최근 12주)</div>
   <div class="charts">
@@ -249,13 +328,13 @@
 </div>
 
 <footer>
-  데이터 출처: KRX, pykrx, yfinance &nbsp;|&nbsp;
+  데이터 출처: KRX, pykrx, Yahoo Finance &nbsp;|&nbsp;
   매주 월요일 자동 업데이트 &nbsp;|&nbsp;
   <a href="https://github.com/hiorio/ETF-Dashboard" style="color:var(--acc)">GitHub</a>
 </footer>
 
 <script>
-const DATA = {"labels": ["2026-03-27"], "datasets": [{"code": "498410", "label": "KODEX 금융고배당TOP10타겟위클리커버드콜", "nav_change_1y": [38.83], "dist_rate_12m": [12.96], "real_return_1y": [51.79]}, {"code": "493810", "label": "TIGER 미국AI빅테크10타겟데일리커버드콜", "nav_change_1y": [28.12], "dist_rate_12m": [15.22], "real_return_1y": [43.34]}, {"code": "JEPQ", "label": "JPMorgan Nasdaq Equity Premium Income", "nav_change_1y": [18.35], "dist_rate_12m": [11.18], "real_return_1y": [29.53]}, {"code": "JEPI", "label": "JPMorgan Equity Premium Income", "nav_change_1y": [7.77], "dist_rate_12m": [8.47], "real_return_1y": [16.24]}, {"code": "0008S0", "label": "TIGER 미국배당다우존스타겟데일리커버드콜", "nav_change_1y": [null], "dist_rate_12m": [null], "real_return_1y": [null]}, {"code": "0094M0", "label": "RISE 코리아밸류업위클리고정커버드콜", "nav_change_1y": [null], "dist_rate_12m": [null], "real_return_1y": [null]}]};
+const DATA = {"labels": ["2026-03-27"], "datasets": [{"code": "498410", "label": "KODEX 금융고배당TOP10타겟위클리커버드콜", "nav_change_1y": [37.13], "dist_rate_12m": [12.92], "real_return_1y": [50.05]}, {"code": "493810", "label": "TIGER 미국AI빅테크10타겟데일리커버드콜", "nav_change_1y": [15.01], "dist_rate_12m": [15.25], "real_return_1y": [30.26]}, {"code": "JEPQ", "label": "JPMorgan Nasdaq Equity Premium Income", "nav_change_1y": [4.1], "dist_rate_12m": [11.18], "real_return_1y": [15.28]}, {"code": "JEPI", "label": "JPMorgan Equity Premium Income", "nav_change_1y": [-2.07], "dist_rate_12m": [8.47], "real_return_1y": [6.4]}, {"code": "0008S0", "label": "TIGER 미국배당다우존스타겟데일리커버드콜", "nav_change_1y": [null], "dist_rate_12m": [null], "real_return_1y": [null]}, {"code": "0094M0", "label": "RISE 코리아밸류업위클리고정커버드콜", "nav_change_1y": [null], "dist_rate_12m": [null], "real_return_1y": [null]}]};
 
 const PALETTE = ["#4f8ef7", "#f7874f", "#4fc98e", "#f74f7e", "#b04ff7", "#f7c94f"];
 
