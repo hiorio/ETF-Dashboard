@@ -167,13 +167,20 @@ def _get_aum(ticker, session, crumb):
             return None
         text = res.text
         # {"fmt":"37B","raw":37000000000} 또는 {"raw":37000000000,"fmt":"37B"} 모두 처리
-        for field in ("totalAssets", "netAssets"):
+        for field in ("totalAssets", "netAssets", "totalNet"):
             m = _re.search(rf'"{field}"\s*:\s*\{{[^}}]*"raw"\s*:\s*([\d.eE+]+)', text)
             if m:
                 val = float(m.group(1))
                 log.info(f"[{ticker}] AUM={val:,.0f} (from HTML {field})")
                 return val
-        log.warning(f"[{ticker}] AUM 필드 없음 (HTML 파싱 실패)")
+        # 디버그: Assets 관련 텍스트 주변 50자 출력
+        for kw in ("totalAssets", "netAssets", "TotalAssets", "NetAssets", "totalNet"):
+            idx = text.find(kw)
+            if idx != -1:
+                log.info(f"[{ticker}] found '{kw}' at {idx}: ...{text[max(0,idx-10):idx+80]}...")
+                break
+        else:
+            log.warning(f"[{ticker}] AUM 필드 없음 (HTML 파싱 실패)")
     except Exception as e:
         log.warning(f"[{ticker}] AUM 오류: {e}")
     return None
@@ -333,8 +340,9 @@ def main():
             d = collect_via_yahoo_api(code, etf["listed_date"], cycle, yf_session, yf_crumb)
 
         # AUM 수집
-        yf_ticker = f"{code}.KS" if country == "KR" else code
-        aum = _get_aum(yf_ticker, yf_session, yf_crumb) if d.get("nav_current") else None
+        # KR ETF는 Yahoo Finance quote 페이지 미지원(404) → US만 시도
+        yf_ticker = None if country == "KR" else code
+        aum = _get_aum(yf_ticker, yf_session, yf_crumb) if (yf_ticker and d.get("nav_current")) else None
 
         real_return_1y = None
         if d.get("dist_rate_12m") is not None and d.get("nav_change_1y") is not None:
