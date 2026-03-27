@@ -168,7 +168,7 @@ def _get_aum(ticker, session, crumb):
         text = res.text
         # HTML 내 JSON이 이중 인코딩되어 따옴표가 \" 로 이스케이프됨
         # → 필드명만 찾고, 그 뒤 80자 안에서 raw:숫자 패턴 매칭
-        for field in ("totalAssets", "netAssets"):
+        for field in ("totalAssets", "totalNetAssets", "netAssets"):
             idx = text.find(field)
             if idx != -1:
                 snippet = text[idx:idx + 80]
