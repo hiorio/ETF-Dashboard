@@ -82,6 +82,7 @@ def load_data():
             SELECT MAX(collected_at) FROM etf_weekly WHERE code = w.code
         )
         ORDER BY
+            CASE WHEN m.country = 'KR' THEN 0 ELSE 1 END,
             CASE WHEN w.real_return_1y IS NULL THEN 1 ELSE 0 END,
             w.real_return_1y DESC
     """).fetchall()
