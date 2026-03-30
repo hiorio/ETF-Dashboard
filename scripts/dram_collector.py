@@ -108,32 +108,104 @@ def _scrape_price_page(scraper):
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(res.text, "lxml")
 
-        # 페이지 내 JSON 데이터 탐색
+        # ── 디버그: 페이지 첫 1000자 ───────────────────────────────────────
+        page_text = soup.get_text(" ", strip=True)
+        log.info(f"[price page] 페이지 텍스트 앞 500자: {page_text[:500]}")
+
+        # ── Next.js __NEXT_DATA__ 탐색 ─────────────────────────────────────
         for tag in soup.find_all("script"):
+            sid = tag.get("id", "")
             text = tag.string or ""
-            # Next.js / 임베디드 JSON
+
+            if sid == "__NEXT_DATA__" or '"buildId"' in text:
+                log.info(f"[price page] __NEXT_DATA__ 발견 ({len(text):,}자)")
+                try:
+                    nd = json.loads(text)
+                    # props.pageProps 하위에서 가격 데이터 탐색
+                    page_props = (nd.get("props") or {}).get("pageProps") or nd
+                    log.info(f"[price page] pageProps keys: {list(page_props.keys())[:20]}")
+                    parsed = _deep_search_prices(page_props)
+                    log.info(f"[price page] __NEXT_DATA__ 파싱 {len(parsed)}건")
+                    results.extend(parsed)
+                except Exception as e:
+                    log.warning(f"[price page] __NEXT_DATA__ 파싱 오류: {e}")
+                    log.info(f"[price page] __NEXT_DATA__ 앞 300자: {text[:300]}")
+                break
+
+        if not results:
+            # ── 모든 script 태그 요약 로깅 ─────────────────────────────────
+            for i, tag in enumerate(soup.find_all("script")[:10]):
+                text = tag.string or ""
+                if len(text) > 100:
+                    log.info(f"[price page] script[{i}] len={len(text)} 앞100: {text[:100].strip()}")
+
+            # ── 일반 JSON 패턴 탐색 ────────────────────────────────────────
+            full_text = res.text
             for pat in (
                 r'"spot[Pp]rice[s]?"\s*:\s*(\[.*?\])',
                 r'"dram"\s*:\s*(\[.*?\])',
                 r'"prices"\s*:\s*(\[.*?\])',
+                r'"data"\s*:\s*(\[.*?"price".*?\])',
             ):
-                m = re.search(pat, text, re.DOTALL)
+                m = re.search(pat, full_text, re.DOTALL)
                 if m:
                     try:
                         items = json.loads(m.group(1))
                         parsed = _parse_price_json(items)
-                        log.info(f"[price page] JSON 파싱 {len(parsed)}건")
-                        results.extend(parsed)
+                        if parsed:
+                            log.info(f"[price page] JSON 패턴 '{pat[:30]}' → {len(parsed)}건")
+                            results.extend(parsed)
                     except Exception:
                         pass
 
         if not results:
-            # 테이블 파싱 시도
             results.extend(_parse_price_table(soup))
 
         log.info(f"[price page] 최종 {len(results)}건")
     except Exception as e:
         log.warning(f"[price page] 오류: {type(e).__name__}: {e}")
+    return results
+
+
+def _deep_search_prices(obj, depth=0, path=""):
+    """JSON 구조를 재귀 탐색해서 DRAM 가격 데이터 찾기"""
+    results = []
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    if depth > 8:
+        return results
+
+    if isinstance(obj, dict):
+        keys_lower = {k.lower(): k for k in obj}
+        # 직접 가격 필드가 있는 경우
+        for spot_k in ("spot", "spot_price", "spotprice", "spot_usd"):
+            if spot_k in keys_lower:
+                price = _to_float(obj[keys_lower[spot_k]])
+                if price and 0.1 < price < 500:
+                    cap = obj.get(keys_lower.get("capacity", ""), "")
+                    typ = obj.get(keys_lower.get("type", ""), "DDR4")
+                    if not cap:
+                        cap = obj.get(keys_lower.get("spec", ""), "")
+                    if not cap:
+                        cap = obj.get(keys_lower.get("density", ""), "")
+                    log.info(f"[deep_search] 가격 발견 path={path} type={typ} cap={cap} price={price}")
+                    if cap:
+                        results.append({
+                            "date": date_str,
+                            "type": str(typ).upper() if "DDR" in str(typ).upper() else "DDR4",
+                            "capacity": str(cap).upper(),
+                            "spot_price": price,
+                            "contract_price": _to_float(obj.get(keys_lower.get("contract", ""))),
+                            "currency": "USD",
+                        })
+                        return results
+        # 하위 탐색 (키 이름이 관련 있는 것 우선)
+        priority_keys = ["dram", "price", "spot", "memory", "data", "items", "list", "result"]
+        sorted_keys = sorted(obj.keys(), key=lambda k: 0 if k.lower() in priority_keys else 1)
+        for k in sorted_keys:
+            results.extend(_deep_search_prices(obj[k], depth+1, f"{path}.{k}"))
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj[:50]):
+            results.extend(_deep_search_prices(item, depth+1, f"{path}[{i}]"))
     return results
 
 
@@ -242,54 +314,66 @@ def _spec_to_capacity(spec_str):
 
 def _find_latest_article_url(scraper):
     """TrendForce 뉴스 목록에서 최신 spot price update 기사 URL 탐색"""
-    # 날짜 기반으로 최근 4주 시도
+    from bs4 import BeautifulSoup
     today = datetime.now()
-    candidates = []
-    for i in range(0, 28, 7):
-        d = today - timedelta(days=i)
-        # 월요일로 정렬 (TrendForce는 보통 화~수 발행)
-        for offset in range(-2, 4):
-            dt = d + timedelta(days=offset)
-            candidates.append(dt)
 
-    tried_urls = set()
-    # 뉴스 목록 페이지에서 기사 URL 검색
+    # ── 1. 뉴스 목록/검색 페이지에서 최신 기사 탐색 ──────────────────────
     list_urls = [
         "https://www.trendforce.com/news/tag/spot-price/",
+        "https://www.trendforce.com/news/category/insights/",
         "https://www.trendforce.com/news/",
     ]
     for list_url in list_urls:
         try:
             res = scraper.get(list_url, timeout=15)
             log.info(f"[article search] {list_url} → HTTP {res.status_code}")
-            if res.status_code == 200:
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(res.text, "lxml")
-                for a in soup.find_all("a", href=True):
-                    href = a["href"]
-                    if "spot-price-update" in href or "spot-price" in href.lower():
-                        if href.startswith("/"):
-                            href = "https://www.trendforce.com" + href
-                        if href not in tried_urls:
-                            log.info(f"[article search] 후보 URL: {href}")
-                            return href
+            if res.status_code != 200:
+                continue
+            soup = BeautifulSoup(res.text, "lxml")
+            # 모든 링크 중 spot-price-update 패턴이고 최근 연도인 것
+            candidates = []
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                if href.startswith("/"):
+                    href = "https://www.trendforce.com" + href
+                if ("spot-price-update" in href or
+                        "memory-spot-price" in href or
+                        "spot-price" in href) and str(today.year) in href:
+                    candidates.append(href)
+            if candidates:
+                # 가장 최근 날짜 URL 선택 (날짜 내림차순)
+                candidates.sort(reverse=True)
+                log.info(f"[article search] 후보 {len(candidates)}건 → {candidates[0]}")
+                return candidates[0]
+            # 연도 없어도 최신 spot 기사 반환
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                if href.startswith("/"):
+                    href = "https://www.trendforce.com" + href
+                if "spot-price-update" in href:
+                    log.info(f"[article search] 후보(연도 무관): {href}")
+                    return href
         except Exception as e:
             log.warning(f"[article search] {list_url} 오류: {e}")
 
-    # 직접 날짜 기반 URL 구성 시도
-    for dt in sorted(set(candidates), reverse=True)[:14]:
-        slug = f"insights-memory-spot-price-update"
+    # ── 2. 날짜 기반 URL 직접 구성 (화~수 발행 패턴) ──────────────────────
+    tried = set()
+    for days_ago in range(0, 21):
+        dt = today - timedelta(days=days_ago)
+        slug = "insights-memory-spot-price-update"
         url = f"https://www.trendforce.com/news/{dt.strftime('%Y/%m/%d')}/{slug}"
-        if url not in tried_urls:
-            tried_urls.add(url)
-            try:
-                res = scraper.head(url, timeout=8, allow_redirects=True)
-                log.info(f"[article search] HEAD {url} → {res.status_code}")
-                if res.status_code == 200:
-                    return url
-            except Exception:
-                pass
+        if url in tried:
+            continue
+        tried.add(url)
+        try:
+            res = scraper.head(url, timeout=8, allow_redirects=True)
+            log.info(f"[article search] HEAD {dt.strftime('%Y-%m-%d')} → {res.status_code}")
+            if res.status_code == 200:
+                return url
+        except Exception:
+            pass
 
+    log.warning("[article search] 최신 기사 URL을 찾지 못함")
     return None
 
 
@@ -324,10 +408,20 @@ def _scrape_article(scraper, url=None):
                     date_str = m.group(1)
                     break
 
-        # 기사 본문 텍스트
-        article = soup.find("article") or soup.find(class_=re.compile(r'content|article|body'))
-        text = article.get_text(" ", strip=True) if article else soup.get_text(" ", strip=True)
+        # 기사 본문 텍스트 — 여러 선택자 시도 후 전체 텍스트 fallback
+        article = (soup.find("article") or
+                   soup.find(class_=re.compile(r'article-content|post-content|entry-content|content-body')) or
+                   soup.find("main"))
+        if article:
+            text = article.get_text(" ", strip=True)
+        else:
+            # script/style 제거 후 전체 텍스트
+            for tag in soup(["script", "style", "nav", "header", "footer"]):
+                tag.decompose()
+            text = soup.get_text(" ", strip=True)
         log.info(f"[article] 본문 {len(text):,}자")
+        if len(text) < 200:
+            log.info(f"[article] 본문 전체: {text}")
 
         seen = set()
         for pattern, mode in PRICE_PATTERNS:
