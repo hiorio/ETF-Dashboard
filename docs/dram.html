@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>D램 가격 대시보드</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e2e8f0;
+    --muted: #8892a4;
+    --pos: #4ade80;
+    --neg: #f87171;
+    --acc: #4f8ef7;
+    --ddr4: #4f8ef7;
+    --ddr5: #f7874f;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  /* ── 헤더 / 네비 ── */
+  .header {
+    background: linear-gradient(135deg, #1a1d27 0%, #0f1117 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 24px 20px 20px;
+    text-align: center;
+  }
+  .header h1 { font-size: 1.6rem; font-weight: 700; color: var(--acc); }
+  .header p  { color: var(--muted); margin-top: 4px; font-size: 0.85rem; }
+  .nav {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 14px;
+  }
+  .nav a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.82rem;
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    transition: color .15s, border-color .15s;
+  }
+  .nav a:hover, .nav a.active {
+    color: var(--acc);
+    border-color: var(--acc);
+  }
+  /* ── 컨테이너 ── */
+  .container { max-width: 1100px; margin: 0 auto; padding: 20px 16px; }
+  .section-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 28px 0 12px;
+  }
+  /* ── 탭 ── */
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab {
+    padding: 6px 18px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: none;
+    color: var(--muted);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .tab.active-ddr4 { background: rgba(79,142,247,.15); color: var(--ddr4); border-color: var(--ddr4); }
+  .tab.active-ddr5 { background: rgba(247,135,79,.15); color: var(--ddr5); border-color: var(--ddr5); }
+  .tab-panel { display: none; }
+  .tab-panel.visible { display: block; }
+  /* ── 테이블 ── */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  thead tr { background: #21253a; }
+  th {
+    padding: 10px 14px;
+    text-align: right;
+    font-weight: 600;
+    color: var(--muted);
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+  th:first-child { text-align: left; }
+  td {
+    padding: 11px 14px;
+    text-align: right;
+    border-top: 1px solid var(--border);
+    font-size: 0.88rem;
+    white-space: nowrap;
+  }
+  td:first-child { text-align: left; font-weight: 500; }
+  tr:hover td { background: rgba(79,142,247,.04); }
+  .pos { color: var(--pos); }
+  .neg { color: var(--neg); }
+  .neutral { color: var(--muted); }
+  .no-data {
+    text-align: center !important;
+    padding: 48px !important;
+    color: var(--muted);
+    line-height: 2.2;
+  }
+  /* ── 요약 카드 ── */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .summary-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .summary-card .label { font-size: 0.72rem; color: var(--muted); margin-bottom: 4px; }
+  .summary-card .price { font-size: 1.15rem; font-weight: 700; color: var(--text); }
+  .summary-card .change { font-size: 0.78rem; margin-top: 2px; }
+  /* ── 차트 ── */
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  @media (max-width: 680px) { .charts { grid-template-columns: 1fr; } }
+  .chart-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .chart-card h3 { font-size: 0.85rem; color: var(--muted); margin-bottom: 12px; }
+  canvas { width: 100% !important; }
+  /* ── 푸터 ── */
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.75rem;
+    padding: 24px 16px;
+    border-top: 1px solid var(--border);
+    margin-top: 32px;
+  }
+  .badge-src {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    background: #1e2a3a;
+    color: #60a5fa;
+    margin-left: 6px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🖥️ D램 가격 대시보드</h1>
+  <p id="updated-at">데이터 로드 중...</p>
+  <nav class="nav">
+    <a href="index.html">📊 ETF 대시보드</a>
+    <a href="dram.html" class="active">🖥️ D램 가격</a>
+  </nav>
+</div>
+
+<div class="container">
+
+  <!-- 탭 -->
+  <div class="tabs">
+    <button class="tab active-ddr4" onclick="switchTab('ddr4')">DDR4</button>
+    <button class="tab" onclick="switchTab('ddr5')">DDR5</button>
+  </div>
+
+  <!-- DDR4 패널 -->
+  <div class="tab-panel visible" id="panel-ddr4">
+    <div class="section-title">📌 DDR4 최신 현물가 요약</div>
+    <div class="summary-grid" id="cards-ddr4"></div>
+
+    <div class="section-title">📋 DDR4 가격 상세</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>규격</th>
+            <th>현물가<br><span style="font-size:.68rem;font-weight:400;opacity:.65">Spot Price</span></th>
+            <th>고정거래가<br><span style="font-size:.68rem;font-weight:400;opacity:.65">Contract</span></th>
+            <th>전주 대비<br><span style="font-size:.68rem;font-weight:400;opacity:.65">WoW</span></th>
+            <th>수집일</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-ddr4">
+          <tr><td colspan="5" class="no-data">로드 중...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section-title">📈 DDR4 현물가 추이</div>
+    <div class="charts">
+      <div class="chart-card">
+        <h3>DDR4 현물가 추이 (USD)</h3>
+        <canvas id="chart-ddr4-spot" height="200"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>DDR4 고정거래가 추이 (USD)</h3>
+        <canvas id="chart-ddr4-contract" height="200"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- DDR5 패널 -->
+  <div class="tab-panel" id="panel-ddr5">
+    <div class="section-title">📌 DDR5 최신 현물가 요약</div>
+    <div class="summary-grid" id="cards-ddr5"></div>
+
+    <div class="section-title">📋 DDR5 가격 상세</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>규격</th>
+            <th>현물가<br><span style="font-size:.68rem;font-weight:400;opacity:.65">Spot Price</span></th>
+            <th>고정거래가<br><span style="font-size:.68rem;font-weight:400;opacity:.65">Contract</span></th>
+            <th>전주 대비<br><span style="font-size:.68rem;font-weight:400;opacity:.65">WoW</span></th>
+            <th>수집일</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-ddr5">
+          <tr><td colspan="5" class="no-data">로드 중...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section-title">📈 DDR5 현물가 추이</div>
+    <div class="charts">
+      <div class="chart-card">
+        <h3>DDR5 현물가 추이 (USD)</h3>
+        <canvas id="chart-ddr5-spot" height="200"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>DDR5 고정거래가 추이 (USD)</h3>
+        <canvas id="chart-ddr5-contract" height="200"></canvas>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  데이터 출처: TrendForce <span class="badge-src">공개 데이터</span>&nbsp;|&nbsp;
+  매주 월요일 자동 업데이트 &nbsp;|&nbsp;
+  <a href="https://github.com/hiorio/ETF-Dashboard" style="color:var(--acc)">GitHub</a>
+</footer>
+
+<script>
+// ── 탭 전환 ──────────────────────────────────────────────────────────────
+function switchTab(type) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('visible'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active-ddr4','active-ddr5'));
+  document.getElementById('panel-' + type).classList.add('visible');
+  const btn = [...document.querySelectorAll('.tab')]
+    .find(t => t.textContent.toLowerCase().includes(type.replace('ddr','')));
+  if (btn) btn.classList.add('active-' + type);
+}
+
+// ── 차트 그리기 ──────────────────────────────────────────────────────────
+const PALETTE_DDR4 = ['#4f8ef7','#4fc98e','#f7c94f','#b04ff7'];
+const PALETTE_DDR5 = ['#f7874f','#f74f7e','#4fc98e','#b04ff7'];
+
+function drawLineChart(canvasId, labels, datasets, palette) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.parentElement.clientWidth - 32;
+  const H = 200;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+
+  ctx.fillStyle = '#1a1d27';
+  ctx.fillRect(0, 0, W, H);
+
+  const allVals = datasets.flatMap(d => d.values.filter(v => v != null));
+  if (!allVals.length || !labels.length) {
+    ctx.fillStyle = '#8892a4'; ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('데이터 없음', W/2, H/2);
+    return;
+  }
+
+  const minV = Math.min(...allVals), maxV = Math.max(...allVals);
+  const pad = (maxV - minV) * 0.15 || 0.5;
+  const yMin = minV - pad, yMax = maxV + pad;
+  const padL = 48, padR = 12, padT = 12, padB = 36;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const xOf = i => padL + (labels.length > 1 ? i / (labels.length-1) * plotW : plotW/2);
+  const yOf = v => padT + (1 - (v-yMin)/(yMax-yMin)) * plotH;
+
+  // 그리드
+  ctx.strokeStyle = '#2a2d3a'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const v = yMin + (yMax-yMin)*i/4;
+    const y = yOf(v);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W-padR, y); ctx.stroke();
+    ctx.fillStyle = '#8892a4'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText('$' + v.toFixed(2), padL-4, y+3);
+  }
+
+  // 선
+  datasets.forEach((ds, idx) => {
+    const color = palette[idx % palette.length];
+    ctx.strokeStyle = color; ctx.lineWidth = 2;
+    ctx.beginPath(); let started = false;
+    ds.values.forEach((v, i) => {
+      if (v == null) { started = false; return; }
+      const x = xOf(i), y = yOf(v);
+      if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ds.values.forEach((v, i) => {
+      if (v == null) return;
+      ctx.beginPath(); ctx.arc(xOf(i), yOf(v), 3, 0, Math.PI*2);
+      ctx.fillStyle = color; ctx.fill();
+    });
+    // 레이블 (마지막 점 오른쪽)
+    const lastIdx = ds.values.reduceRight((acc, v, i) => acc === -1 && v != null ? i : acc, -1);
+    if (lastIdx >= 0) {
+      ctx.fillStyle = color; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText(ds.label, Math.min(xOf(lastIdx)+6, W-padR-30), yOf(ds.values[lastIdx])+3);
+    }
+  });
+
+  // x축 레이블
+  if (labels.length >= 2) {
+    ctx.fillStyle = '#8892a4'; ctx.font = '10px sans-serif';
+    ctx.textAlign = 'left';  ctx.fillText(labels[0].slice(5), padL, H-6);
+    ctx.textAlign = 'right'; ctx.fillText(labels[labels.length-1].slice(5), W-padR, H-6);
+  }
+}
+
+// ── 데이터 렌더링 ─────────────────────────────────────────────────────────
+function renderAll(data) {
+  if (!data) return;
+  const updated = data.updated || '';
+  document.getElementById('updated-at').textContent =
+    `TrendForce 공개 데이터 · 최종 수집: ${updated}`;
+
+  const latest = data.latest || [];
+  const series = data.series || [];
+
+  ['ddr4','ddr5'].forEach(type => {
+    const TYPE = type.toUpperCase();
+    const items = latest.filter(d => d.type === TYPE);
+    const tbody = document.getElementById('tbody-' + type);
+    const cards = document.getElementById('cards-' + type);
+
+    if (!items.length) {
+      tbody.innerHTML = `<tr><td colspan="5" class="no-data">
+        수집된 데이터가 없습니다.<br>
+        TrendForce 페이지 구조 변경 또는 스크래핑 차단 가능성이 있습니다.<br>
+        <small style="color:var(--muted)">GitHub Actions 로그를 확인해 주세요.</small>
+      </td></tr>`;
+      cards.innerHTML = '';
+      return;
+    }
+
+    // 요약 카드
+    cards.innerHTML = items.map(d => {
+      const chg = d.spot_change_pct;
+      const chgHtml = chg != null
+        ? `<div class="change ${chg >= 0 ? 'pos' : 'neg'}">${chg >= 0 ? '▲' : '▼'} ${Math.abs(chg).toFixed(2)}% WoW</div>`
+        : `<div class="change neutral">-</div>`;
+      return `<div class="summary-card">
+        <div class="label">${d.type} ${d.capacity}</div>
+        <div class="price">${d.spot != null ? '$' + d.spot.toFixed(3) : '-'}</div>
+        ${chgHtml}
+      </div>`;
+    }).join('');
+
+    // 테이블
+    tbody.innerHTML = items.map(d => {
+      const chg = d.spot_change_pct;
+      const chgStr = chg != null
+        ? `<span class="${chg >= 0 ? 'pos' : 'neg'}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>`
+        : '-';
+      return `<tr>
+        <td>${d.type} ${d.capacity}</td>
+        <td>${d.spot != null ? '$' + d.spot.toFixed(3) : '-'}</td>
+        <td>${d.contract != null ? '$' + d.contract.toFixed(3) : '-'}</td>
+        <td>${chgStr}</td>
+        <td class="neutral" style="font-size:.8rem">${d.date || '-'}</td>
+      </tr>`;
+    }).join('');
+
+    // 차트용 데이터
+    const typeSeries = series.filter(s => s.type === TYPE);
+    if (typeSeries.length) {
+      const allDates = [...new Set(typeSeries.flatMap(s => s.dates))].sort();
+      const palette = type === 'ddr4' ? PALETTE_DDR4 : PALETTE_DDR5;
+
+      const spotDS = typeSeries.map(s => ({
+        label: s.capacity,
+        values: allDates.map(d => { const i = s.dates.indexOf(d); return i >= 0 ? s.spot[i] : null; })
+      }));
+      const contractDS = typeSeries.map(s => ({
+        label: s.capacity,
+        values: allDates.map(d => { const i = s.dates.indexOf(d); return i >= 0 ? s.contract[i] : null; })
+      })).filter(d => d.values.some(v => v != null));
+
+      drawLineChart(`chart-${type}-spot`, allDates, spotDS, palette);
+      drawLineChart(`chart-${type}-contract`, allDates, contractDS, palette);
+    }
+  });
+}
+
+// ── dram.json 로드 ────────────────────────────────────────────────────────
+fetch('dram.json')
+  .then(r => r.ok ? r.json() : Promise.reject(r.status))
+  .then(renderAll)
+  .catch(err => {
+    console.warn('dram.json 로드 실패:', err);
+    document.getElementById('updated-at').textContent = '데이터를 불러올 수 없습니다.';
+    ['ddr4','ddr5'].forEach(type => {
+      document.getElementById('tbody-' + type).innerHTML =
+        `<tr><td colspan="5" class="no-data">
+          dram.json 파일을 찾을 수 없습니다.<br>
+          GitHub Actions에서 dram_collector.py를 먼저 실행해 주세요.
+        </td></tr>`;
+    });
+  });
+</script>
+
+</body>
+</html>

@@ -8,9 +8,9 @@ on:
   push:
     branches: [main]
     paths:
-      # 코드나 ETF 목록이 변경될 때만 실행 (bot 커밋 재실행 방지)
       - "scripts/collector.py"
       - "scripts/report.py"
+      - "scripts/dram_collector.py"
       - "data/etf_list.json"
       - "requirements.txt"
 
@@ -41,12 +41,21 @@ jobs:
       - name: Generate HTML report
         run: python3 scripts/report.py
 
+      - name: Collect DRAM prices
+        run: |
+          # Playwright 설치 시도 (JS 렌더링 필요 시)
+          pip install playwright 2>/dev/null || true
+          playwright install chromium --with-deps 2>/dev/null || true
+          # 실패해도 job 전체는 성공 처리
+          python3 scripts/dram_collector.py || echo "DRAM 수집 실패 (기존 데이터 유지)"
+
       - name: Commit & push
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/etf.db docs/index.html
+          git add data/etf.db docs/index.html docs/dram.html docs/dram.json
           # 변경사항이 있을 때만 커밋
           git diff --cached --quiet || \
             git commit -m "chore: weekly ETF data update $(date +'%Y-%m-%d') [skip ci]"
+          git pull --rebase origin main
           git push
