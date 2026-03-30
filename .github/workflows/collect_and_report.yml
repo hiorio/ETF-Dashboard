@@ -43,10 +43,7 @@ jobs:
 
       - name: Collect DRAM prices
         run: |
-          # Playwright 설치 시도 (JS 렌더링 필요 시)
-          pip install playwright 2>/dev/null || true
-          playwright install chromium --with-deps 2>/dev/null || true
-          # 실패해도 job 전체는 성공 처리
+          # 실패해도 job 전체는 성공 처리 (기존 ETF 수집에 영향 없음)
           python3 scripts/dram_collector.py || echo "DRAM 수집 실패 (기존 데이터 유지)"
 
       - name: Commit & push
