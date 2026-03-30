@@ -42,6 +42,9 @@ _MIGRATIONS = [
     "ALTER TABLE etf_weekly ADD COLUMN return_3m REAL",
     "ALTER TABLE etf_weekly ADD COLUMN return_6m REAL",
     "ALTER TABLE etf_weekly ADD COLUMN nav_per_share REAL",
+    "ALTER TABLE etf_weekly ADD COLUMN nav_change_1m REAL",
+    "ALTER TABLE etf_weekly ADD COLUMN nav_change_3m REAL",
+    "ALTER TABLE etf_weekly ADD COLUMN nav_change_6m REAL",
 ]
 
 
@@ -80,6 +83,9 @@ def init_db(conn):
             return_1m                REAL,
             return_3m                REAL,
             return_6m                REAL,
+            nav_change_1m            REAL,
+            nav_change_3m            REAL,
+            nav_change_6m            REAL,
             dist_rate_12m            REAL,
             dist_rate_monthly        REAL,
             dist_rate_annualized     REAL,
@@ -135,44 +141,91 @@ def save_monthly_dists(conn, code, monthly_dists):
 
 def _get_naver_etf(code):
     """네이버 금융 API로 KR ETF 시가총액 + 순자산가치/주 수집"""
+
+    def to_float(v):
+        try:
+            return float(str(v).replace(",", "").strip()) if v not in (None, "", "-", "0") else None
+        except (ValueError, TypeError):
+            return None
+
+    # ── 1. 기본 정보 endpoint ──────────────────────────────────────────────
+    aum, nav = None, None
     try:
         url = f"https://m.stock.naver.com/api/stock/{code}/basic"
         res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        log.info(f"[{code}] Naver API {res.status_code}")
-        if res.status_code != 200:
-            return None, None
-        data = res.json()
+        log.info(f"[{code}] Naver basic API {res.status_code}")
+        if res.status_code == 200:
+            data = res.json()
 
-        def to_float(v):
-            try:
-                return float(str(v).replace(",", "").strip()) if v not in (None, "", "-") else None
-            except (ValueError, TypeError):
-                return None
+            # AUM: Naver는 marketValue (시가총액) 사용
+            for f in ("marketValue", "marketCap", "totalAsset", "fundTotalAsset",
+                      "netAsset", "navTotalAsset", "etfTotalAsset"):
+                aum = to_float(data.get(f))
+                if aum and aum > 1000:   # 최소 1천원 이상이어야 AUM
+                    log.info(f"[{code}] AUM={aum:,.0f} (basic/{f})")
+                    break
+                aum = None
 
-        # 순자산가치(NAV per share): nav, iNav, navPrice 순으로 시도
-        nav = None
-        for f in ("nav", "iNav", "navPrice", "netAssetValue"):
-            nav = to_float(data.get(f))
-            if nav:
-                log.info(f"[{code}] NAV={nav:,.2f} (from {f})")
-                break
+            # NAV per share
+            for f in ("iNav", "nav", "navPrice", "netAssetValue",
+                      "iNavValue", "estimatedNav", "navPerUnit"):
+                nav = to_float(data.get(f))
+                if nav and nav > 100:    # 최소 100원 이상이어야 NAV
+                    log.info(f"[{code}] NAV={nav:,.2f} (basic/{f})")
+                    break
+                nav = None
 
-        # 시가총액(AUM): marketCap, totalAsset, netAsset 순으로 시도
-        aum = None
-        for f in ("marketCap", "totalAsset", "fundTotalAsset", "netAsset"):
-            aum = to_float(data.get(f))
-            if aum:
-                log.info(f"[{code}] AUM={aum:,.0f} (from {f})")
-                break
-
-        if nav is None and aum is None:
-            log.info(f"[{code}] Naver 응답 keys: {list(data.keys())[:20]}")
-
-        return aum, nav
-
+            # 찾지 못하면 전체 응답 로깅 (디버그용)
+            if aum is None or nav is None:
+                non_null = {k: v for k, v in data.items()
+                            if v not in (None, "", "-", "0", 0)}
+                log.info(f"[{code}] Naver basic 응답 (non-null): {non_null}")
     except Exception as e:
-        log.warning(f"[{code}] Naver API 오류: {e}")
-        return None, None
+        log.warning(f"[{code}] Naver basic API 오류: {e}")
+
+    # ── 2. ETF 전용 endpoint (basic에서 못 찾은 경우) ───────────────────────
+    if aum is None or nav is None:
+        for ep in ("etfAnalysis", "etfSummary", "etfInfo"):
+            try:
+                url2 = f"https://m.stock.naver.com/api/stock/{code}/{ep}"
+                res2 = requests.get(url2, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+                log.info(f"[{code}] Naver {ep} API {res2.status_code}")
+                if res2.status_code != 200:
+                    continue
+                d2 = res2.json()
+                if isinstance(d2, list):
+                    d2 = d2[0] if d2 else {}
+
+                if aum is None:
+                    for f in ("navTotalAsset", "totalNetAsset", "fundNetAsset",
+                              "marketValue", "totalAsset", "etfTotalAsset"):
+                        aum = to_float(d2.get(f))
+                        if aum and aum > 1000:
+                            log.info(f"[{code}] AUM={aum:,.0f} ({ep}/{f})")
+                            break
+                        aum = None
+
+                if nav is None:
+                    for f in ("iNav", "nav", "navPrice", "navPerUnit",
+                              "iNavValue", "estimatedNav", "netAssetValue"):
+                        nav = to_float(d2.get(f))
+                        if nav and nav > 100:
+                            log.info(f"[{code}] NAV={nav:,.2f} ({ep}/{f})")
+                            break
+                        nav = None
+
+                if aum is not None and nav is not None:
+                    break
+
+                if aum is None and nav is None:
+                    non_null2 = {k: v for k, v in d2.items()
+                                 if v not in (None, "", "-", "0", 0)}
+                    log.info(f"[{code}] Naver {ep} 응답 (non-null): {non_null2}")
+
+            except Exception as e:
+                log.warning(f"[{code}] Naver {ep} API 오류: {e}")
+
+    return aum, nav
 
 
 # ── Yahoo Finance 세션 ─────────────────────────────────────────────────────
@@ -238,6 +291,7 @@ def collect_via_yahoo_api(ticker, listed_date, dividend_cycle="월", session=Non
         "price_change": None, "price_change_pct": None,
         "nav_change_1y": None, "nav_change_since_listing": None,
         "return_1m": None, "return_3m": None, "return_6m": None,
+        "nav_change_1m": None, "nav_change_3m": None, "nav_change_6m": None,
         "dist_rate_12m": None, "dist_rate_monthly": None, "dist_rate_annualized": None,
         "monthly_dists": {},
     }
@@ -313,6 +367,10 @@ def collect_via_yahoo_api(ticker, listed_date, dividend_cycle="월", session=Non
         result["return_3m"]              = pct_return(now - timedelta(days=91))
         result["return_6m"]              = pct_return(now - timedelta(days=182))
         result["nav_change_1y"]          = pct_return(now - timedelta(days=365))
+        # NAV 변화율 (가격기반, ETF 특성상 가격 ≈ NAV)
+        result["nav_change_1m"]          = result["return_1m"]
+        result["nav_change_3m"]          = result["return_3m"]
+        result["nav_change_6m"]          = result["return_6m"]
         p_first = float(prices.iloc[0])
         result["nav_change_since_listing"] = round((price_now / p_first - 1) * 100, 2) if p_first else None
 
@@ -399,9 +457,10 @@ def main():
                  nav_current, price_prev, price_change, price_change_pct, aum,
                  nav_change_1y, nav_change_since_listing,
                  return_1m, return_3m, return_6m,
+                 nav_change_1m, nav_change_3m, nav_change_6m,
                  dist_rate_12m, dist_rate_monthly, dist_rate_annualized,
                  real_return_1y, nav_per_share)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 code, collected_at,
@@ -410,6 +469,7 @@ def main():
                 aum,
                 d.get("nav_change_1y"), d.get("nav_change_since_listing"),
                 d.get("return_1m"),     d.get("return_3m"),     d.get("return_6m"),
+                d.get("nav_change_1m"), d.get("nav_change_3m"), d.get("nav_change_6m"),
                 d.get("dist_rate_12m"), d.get("dist_rate_monthly"), d.get("dist_rate_annualized"),
                 real_return_1y, nav_per_share,
             ),

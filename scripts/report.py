@@ -72,6 +72,7 @@ def load_data():
             w.nav_current, w.price_prev, w.price_change, w.price_change_pct, w.aum,
             w.nav_change_1y, w.nav_change_since_listing,
             w.return_1m, w.return_3m, w.return_6m,
+            w.nav_change_1m, w.nav_change_3m, w.nav_change_6m,
             w.dist_rate_12m, w.dist_rate_monthly, w.dist_rate_annualized,
             w.real_return_1y, w.nav_per_share,
             m.name, m.country, m.strategy, m.dividend_cycle, m.dividend_timing,
@@ -226,9 +227,9 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
           <td class="{change_pct_cls}">{change_disp}<br><span class="sub-val">{change_pct}</span></td>
           <td>{aum_disp}</td>
           <td class="muted-cell">{listed}</td>
-          {td_pct(r.get('return_1m'))}
-          {td_pct(r.get('return_3m'))}
-          {td_pct(r.get('return_6m'))}
+          {td_pct(r.get('nav_change_1m') if r.get('nav_change_1m') is not None else r.get('return_1m'))}
+          {td_pct(r.get('nav_change_3m') if r.get('nav_change_3m') is not None else r.get('return_3m'))}
+          {td_pct(r.get('nav_change_6m') if r.get('nav_change_6m') is not None else r.get('return_6m'))}
           {td_pct(r.get('nav_change_1y'))}
           <td class="{chg_since_cls}">{pct(chg_since)}</td>
           <td class="{total_ret_cls}"><strong>{pct(total_ret)}</strong></td>
@@ -377,6 +378,7 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
   .neutral {{ color: var(--text); }}
   .muted-cell {{ color: var(--muted); font-size: 0.8rem; }}
   .sub-val {{ font-size: 0.75rem; opacity: 0.85; }}
+  .th-sub {{ font-size: 0.68rem; font-weight: 400; opacity: 0.65; }}
   .real-return {{ font-size: 0.95rem; }}
   .real-return.pos {{ color: #22c55e; }}
   .real-return.neg {{ color: #ef4444; }}
@@ -445,22 +447,22 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
       <thead>
         <tr>
           <th>ETF</th>
-          <th>현재가</th>
-          <th>전일가</th>
-          <th>등락</th>
-          <th>시가총액</th>
-          <th>상장일</th>
-          <th>1M 수익률</th>
-          <th>3M 수익률</th>
-          <th>6M 수익률</th>
-          <th>1Y 수익률</th>
-          <th>상장이후 NAV</th>
-          <th>상장이후 총수익률 ★★</th>
-          <th>순자산가치<br><span style="font-weight:400;font-size:0.7rem">(프리미엄)</span></th>
-          <th>월분배율</th>
-          <th>분배율 12M</th>
-          <th>분배율 연환산</th>
-          <th>실질수익률 1Y ★</th>
+          <th>현재가<br><span class="th-sub">종가</span></th>
+          <th>전일가<br><span class="th-sub">직전거래일</span></th>
+          <th>등락<br><span class="th-sub">전일대비</span></th>
+          <th>시가총액<br><span class="th-sub">운용규모</span></th>
+          <th>상장일<br><span class="th-sub">설정일</span></th>
+          <th>NAV 변화율 1M<br><span class="th-sub">최근 1개월</span></th>
+          <th>NAV 변화율 3M<br><span class="th-sub">최근 3개월</span></th>
+          <th>NAV 변화율 6M<br><span class="th-sub">최근 6개월</span></th>
+          <th>NAV 변화율 1Y<br><span class="th-sub">최근 1년</span></th>
+          <th>상장이후 NAV<br><span class="th-sub">상장가 기준</span></th>
+          <th>상장이후 총수익률 ★★<br><span class="th-sub">NAV변화+누적분배</span></th>
+          <th>순자산가치<br><span class="th-sub">프리미엄/할인</span></th>
+          <th>월분배율<br><span class="th-sub">최근 1회</span></th>
+          <th>분배율 12M<br><span class="th-sub">최근 12개월</span></th>
+          <th>분배율 연환산<br><span class="th-sub">최근분배×횟수</span></th>
+          <th>실질수익률 1Y ★<br><span class="th-sub">분배율+1Y수익</span></th>
         </tr>
       </thead>
       <tbody>
