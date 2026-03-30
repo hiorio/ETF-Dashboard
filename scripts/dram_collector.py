@@ -121,7 +121,6 @@ def _scrape_price_page(scraper):
                 log.info(f"[price page] __NEXT_DATA__ 발견 ({len(text):,}자)")
                 try:
                     nd = json.loads(text)
-                    # props.pageProps 하위에서 가격 데이터 탐색
                     page_props = (nd.get("props") or {}).get("pageProps") or nd
                     log.info(f"[price page] pageProps keys: {list(page_props.keys())[:20]}")
                     parsed = _deep_search_prices(page_props)
@@ -131,6 +130,10 @@ def _scrape_price_page(scraper):
                     log.warning(f"[price page] __NEXT_DATA__ 파싱 오류: {e}")
                     log.info(f"[price page] __NEXT_DATA__ 앞 300자: {text[:300]}")
                 break
+
+            # Schema.org Dataset 스크립트 — 가격 데이터 포함 가능성
+            if '"Dataset"' in text or "DRAM Spot Price" in text:
+                log.info(f"[price page] Schema/Dataset 스크립트 발견 전체내용: {text}")
 
         if not results:
             # ── 모든 script 태그 요약 로깅 ─────────────────────────────────
@@ -336,23 +339,18 @@ def _find_latest_article_url(scraper):
                 href = a["href"]
                 if href.startswith("/"):
                     href = "https://www.trendforce.com" + href
-                if ("spot-price-update" in href or
-                        "memory-spot-price" in href or
-                        "spot-price" in href) and str(today.year) in href:
+                # 정확한 패턴만 매칭 — "helium spot-price" 같은 기사 제외
+                if ("insights-memory-spot-price-update" in href or
+                        "memory-spot-price-update" in href):
                     candidates.append(href)
             if candidates:
-                # 가장 최근 날짜 URL 선택 (날짜 내림차순)
                 candidates.sort(reverse=True)
                 log.info(f"[article search] 후보 {len(candidates)}건 → {candidates[0]}")
                 return candidates[0]
-            # 연도 없어도 최신 spot 기사 반환
-            for a in soup.find_all("a", href=True):
-                href = a["href"]
-                if href.startswith("/"):
-                    href = "https://www.trendforce.com" + href
-                if "spot-price-update" in href:
-                    log.info(f"[article search] 후보(연도 무관): {href}")
-                    return href
+            # 모든 링크 로깅 (디버그)
+            all_hrefs = [a["href"] for a in soup.find_all("a", href=True)
+                         if str(today.year) in a["href"] and "news" in a["href"]]
+            log.info(f"[article search] {list_url} 내 {today.year}년 뉴스 링크 상위10: {all_hrefs[:10]}")
         except Exception as e:
             log.warning(f"[article search] {list_url} 오류: {e}")
 
