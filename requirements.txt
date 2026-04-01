@@ -3,3 +3,5 @@ pandas==2.2.2
 lxml==5.2.1
 beautifulsoup4==4.12.3
 cloudscraper==1.2.71
+pykrx>=1.0.47
+yfinance>=0.2.40

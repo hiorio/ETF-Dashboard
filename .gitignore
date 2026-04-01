@@ -2,3 +2,6 @@
 __pycache__/
 credentials.json
 .env
+
+# ETF DB — GitHub Actions artifact로 관리 (git 추적 제외)
+data/etf.db

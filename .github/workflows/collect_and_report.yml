@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   collect-and-report:
@@ -25,6 +26,38 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Restore ETF DB from latest artifact
+        # data/etf.db는 git이 아닌 Actions artifact로 영속 관리됨.
+        # 첫 실행 전 수동 마이그레이션: git rm --cached data/etf.db && git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ARTIFACT_URL=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=50" \
+            --jq '[.artifacts[] | select(.name=="etf-db" and .expired==false)] | sort_by(.created_at) | last | .archive_download_url // empty')
+
+          if [ -n "$ARTIFACT_URL" ]; then
+            echo "이전 DB artifact 복원 중..."
+            curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" "$ARTIFACT_URL" -o /tmp/etf-db.zip
+
+            # 압축 내부 경로 확인 후 정규화 (data/ 중첩 방지)
+            unzip -l /tmp/etf-db.zip
+            unzip -o /tmp/etf-db.zip -d /tmp/etf-db-extracted/
+
+            # etf.db 위치 탐색 → data/etf.db로 정규화
+            DB_FILE=$(find /tmp/etf-db-extracted/ -name "etf.db" | head -1)
+            if [ -n "$DB_FILE" ]; then
+              cp "$DB_FILE" data/etf.db
+              echo "DB 복원 완료: $(ls -lh data/etf.db)"
+            else
+              echo "::warning::압축 내 etf.db를 찾지 못했습니다 — 새로 시작"
+            fi
+          else
+            echo "이전 DB artifact 없음"
+            if [ -f data/etf.db ]; then
+              echo "git 추적 DB 파일 사용 (첫 실행): $(ls -lh data/etf.db)"
+            fi
+          fi
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -44,13 +77,73 @@ jobs:
       - name: Collect DRAM prices
         run: |
           # 실패해도 job 전체는 성공 처리 (기존 ETF 수집에 영향 없음)
-          python3 scripts/dram_collector.py || echo "DRAM 수집 실패 (기존 데이터 유지)"
+          python3 scripts/dram_collector.py || echo "::warning::DRAM 수집 실패 (기존 데이터 유지)"
 
-      - name: Commit & push
+      - name: Data quality check
+        # 핵심 필드 null 비율 ≥ 2/3 이면 ::warning:: 출력
+        # 최신 수집일이 8일 초과 시 ::warning:: 출력
+        run: |
+          python3 - <<'EOF'
+          import sqlite3, sys
+          from pathlib import Path
+          from datetime import datetime, timedelta
+
+          db = Path("data/etf.db")
+          if not db.exists():
+              print("::warning::ETF DB 파일 없음")
+              sys.exit(0)
+
+          conn = sqlite3.connect(db)
+
+          # 최신 수집 날짜 확인
+          result = conn.execute("SELECT MAX(collected_at) FROM etf_weekly").fetchone()
+          latest = result[0] if result else None
+
+          if not latest:
+              print("::warning::ETF weekly 데이터 없음")
+          elif (datetime.now() - datetime.strptime(latest, "%Y-%m-%d")).days > 8:
+              print(f"::warning::ETF 데이터가 오래됨 — 마지막 수집: {latest}")
+          else:
+              print(f"최신 수집일: {latest}")
+
+          # ETF별 핵심 데이터 null 비율 확인 (nav / dist_rate_12m / nav_change_1y)
+          rows = conn.execute("""
+              SELECT code, nav_current, dist_rate_12m, nav_change_1y
+              FROM etf_weekly
+              WHERE collected_at = (SELECT MAX(collected_at) FROM etf_weekly)
+          """).fetchall()
+
+          warn_count = 0
+          for code, nav, dist, nav1y in rows:
+              nulls = sum(1 for v in [nav, dist, nav1y] if v is None)
+              if nulls >= 2:
+                  print(f"::warning::[{code}] 핵심 데이터 {nulls}/3 누락 (nav={nav}, dist12m={dist}, nav1y={nav1y})")
+                  warn_count += 1
+              else:
+                  print(f"[{code}] nav={nav}  dist12m={dist}%  nav1y={nav1y}%")
+
+          conn.close()
+
+          if warn_count > 0:
+              print(f"::warning::데이터 품질 경고: {warn_count}개 ETF 핵심 필드 누락")
+          else:
+              print(f"데이터 품질 OK: {len(rows)}개 ETF 정상")
+          EOF
+
+      - name: Upload DB artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: etf-db
+          path: data/etf.db
+          retention-days: 90
+
+      - name: Commit & push (HTML only)
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/etf.db docs/index.html docs/dram.html docs/dram.json docs/_debug_trendforce.html 2>/dev/null || true
+          # etf.db는 artifact로 관리 — git에 포함하지 않음
+          git add docs/index.html docs/dram.html docs/dram.json 2>/dev/null || true
           # 변경사항이 있을 때만 커밋
           git diff --cached --quiet || \
             git commit -m "chore: weekly ETF data update $(date +'%Y-%m-%d') [skip ci]"

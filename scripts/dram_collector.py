@@ -105,36 +105,15 @@ def _scrape_price_page(scraper):
         if res.status_code != 200:
             return results
 
-        # ── 디버그: HTML 덤프 (구조 파악용, 첫 실행 후 제거 예정) ───────────
-        dump_path = BASE_DIR / "docs" / "_debug_trendforce.html"
-        dump_path.write_text(res.text, encoding="utf-8")
-        log.info(f"[price page] HTML 덤프 저장: {dump_path}")
-
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(res.text, "lxml")
 
-        # ── Schema.org Dataset 스크립트 전체 로깅 ─────────────────────────
-        for tag in soup.find_all("script"):
-            text = tag.string or ""
-            if '"Dataset"' in text or "DRAM Spot Price" in text:
-                log.info(f"[price page] Schema Dataset 전체:\n{text}")
-
-        # ── 가격 관련 요소 탐색 ────────────────────────────────────────────
-        # data-* 속성에서 API URL 힌트 찾기
-        for el in soup.find_all(attrs={"data-url": True}):
-            log.info(f"[price page] data-url 요소: tag={el.name} data-url={el['data-url']}")
-        for el in soup.find_all(attrs={"data-api": True}):
-            log.info(f"[price page] data-api 요소: {el.get('data-api')}")
-        for el in soup.find_all(attrs={"data-src": True}):
-            log.info(f"[price page] data-src 요소: {el.get('data-src')}")
-
-        # 외부 JS 파일 목록 (API 패턴 힌트)
-        js_srcs = [t["src"] for t in soup.find_all("script", src=True)]
-        log.info(f"[price page] 외부 JS 파일 {len(js_srcs)}개: {js_srcs[:8]}")
-
         # fetch() / XMLHttpRequest URL 패턴 탐색
         full_text = res.text
-        api_patterns = re.findall(r'(?:fetch|axios\.get|url)\s*[:(]\s*["\']([^"\']+(?:api|price|dram|chart)[^"\']*)["\']', full_text, re.IGNORECASE)
+        api_patterns = re.findall(
+            r'(?:fetch|axios\.get|url)\s*[:(]\s*["\']([^"\']+(?:api|price|dram|chart)[^"\']*)["\']',
+            full_text, re.IGNORECASE
+        )
         if api_patterns:
             log.info(f"[price page] API URL 패턴 발견: {api_patterns[:10]}")
 
@@ -142,6 +121,9 @@ def _scrape_price_page(scraper):
         price_candidates = re.findall(r'\$\s*(\d+\.\d{2,4})', full_text)
         if price_candidates:
             log.info(f"[price page] 가격 패턴 후보 {len(price_candidates)}개: {price_candidates[:20]}")
+
+        # 테이블에서 가격 파싱 시도
+        results = _parse_price_table(soup)
 
         log.info(f"[price page] 최종 {len(results)}건")
     except Exception as e:
@@ -158,7 +140,6 @@ def _deep_search_prices(obj, depth=0, path=""):
 
     if isinstance(obj, dict):
         keys_lower = {k.lower(): k for k in obj}
-        # 직접 가격 필드가 있는 경우
         for spot_k in ("spot", "spot_price", "spotprice", "spot_usd"):
             if spot_k in keys_lower:
                 price = _to_float(obj[keys_lower[spot_k]])
@@ -180,7 +161,6 @@ def _deep_search_prices(obj, depth=0, path=""):
                             "currency": "USD",
                         })
                         return results
-        # 하위 탐색 (키 이름이 관련 있는 것 우선)
         priority_keys = ["dram", "price", "spot", "memory", "data", "items", "list", "result"]
         sorted_keys = sorted(obj.keys(), key=lambda k: 0 if k.lower() in priority_keys else 1)
         for k in sorted_keys:
@@ -201,7 +181,6 @@ def _parse_price_json(items):
             continue
         keys = {k.lower(): k for k in item}
         cap_k = keys.get("capacity") or keys.get("spec") or keys.get("density")
-        typ_k = keys.get("type") or keys.get("product") or keys.get("ddrtype")
         spot_k = keys.get("spot") or keys.get("spot_price") or keys.get("spotprice")
         con_k  = keys.get("contract") or keys.get("contract_price") or keys.get("contractprice")
         if cap_k and spot_k:
@@ -210,8 +189,7 @@ def _parse_price_json(items):
             m_cap  = re.search(r'(\d+\s*GB)', str(raw), re.I)
             results.append({
                 "date": date_str,
-                "type": (m_type.group(1).upper() if m_type
-                         else str(item.get(typ_k, "DDR4")).upper()),
+                "type": (m_type.group(1).upper() if m_type else "DDR4"),
                 "capacity": (m_cap.group(1).replace(" ", "") if m_cap else str(raw)),
                 "spot_price": _to_float(item.get(spot_k)),
                 "contract_price": _to_float(item.get(con_k)) if con_k else None,
@@ -236,7 +214,6 @@ def _parse_price_table(soup):
             product = cells[0]
             m_type = re.search(r'(DDR[45])', product, re.I)
             m_cap  = re.search(r'(\d+GB)', product, re.I)
-            # 숫자처럼 보이는 셀에서 현물가 추출
             prices = [_to_float(c) for c in cells[1:] if _to_float(c) and _to_float(c) > 0.5]
             if prices:
                 results.append({
@@ -252,22 +229,13 @@ def _parse_price_table(soup):
 
 # ── 전략 2: 주간 spot price update 기사 파싱 ──────────────────────────────
 
-# 검색 결과 확인된 가격 패턴 예시:
-#   "DDR4 1Gx8 3200MT/s ... US$34.00"
-#   "DDR5 16Gb 4800MT/s ... US$2.50"
-#   "8GB DDR4 ... spot price of $X.XX"
 PRICE_PATTERNS = [
-    # "DDR4 1Gx8 ... US$34.00" 또는 "DDR4 4Gb ... $1.234"
     (r'(DDR[45])\s+(\d+G[bx]\d*[^,]*?)\s+[^\d]*?US?\$\s*([\d.]+)', 'spec'),
-    # "8GB DDR4 ... $3.50" 또는 "16GB DDR5 ... US$5.00"
     (r'(\d+GB)\s+(DDR[45])[^\d]*?US?\$\s*([\d.]+)', 'cap_type'),
-    # "DDR4 8GB spot price ... $X.XX"
     (r'(DDR[45])\s+(\d+GB)[^\d]*?US?\$\s*([\d.]+)', 'type_cap'),
-    # generic "X.XX" near DDR mentions (fallback)
     (r'(DDR[45])[^.]*?([\d]+[Gx][\w]*)[^.]*?US?\$\s*([\d.]+)', 'generic'),
 ]
 
-# 칩 스펙 → 용량 매핑
 SPEC_TO_CAP = {
     "512mx8": "4GB", "512m": "4GB",
     "1gx8": "8GB",  "1g":  "8GB",
@@ -278,19 +246,13 @@ SPEC_TO_CAP = {
 
 
 def _spec_to_capacity(spec_str):
-    """'1Gx8', '2Gx8 4800' 등 칩 스펙 문자열 → 'XGB' 변환"""
     s = spec_str.lower().strip()
     for k, v in SPEC_TO_CAP.items():
         if s.startswith(k):
             return v
-    # 숫자 + G 패턴 (예: 16Gb → 16GB)
     m = re.match(r'(\d+)\s*g', s)
     if m:
-        n = int(m.group(1))
-        # Gb(기가비트) vs GB(기가바이트) 구분 — 스펙 표기는 보통 Gb
-        # 4Gb → 512MB (모듈 아님), 8Gb→1GB, 16Gb→2GB 이런 식 — 모듈 GB로 변환 불가
-        # 그냥 숫자 그대로 사용 (기사 맥락에 따라)
-        return f"{n}GB"
+        return f"{m.group(1)}GB"
     return spec_str.upper()
 
 
@@ -299,7 +261,6 @@ def _find_latest_article_url(scraper):
     from bs4 import BeautifulSoup
     today = datetime.now()
 
-    # ── 1. 뉴스 목록/검색 페이지에서 최신 기사 탐색 ──────────────────────
     list_urls = [
         "https://www.trendforce.com/news/tag/spot-price/",
         "https://www.trendforce.com/news/category/insights/",
@@ -312,13 +273,11 @@ def _find_latest_article_url(scraper):
             if res.status_code != 200:
                 continue
             soup = BeautifulSoup(res.text, "lxml")
-            # 모든 링크 중 spot-price-update 패턴이고 최근 연도인 것
             candidates = []
             for a in soup.find_all("a", href=True):
                 href = a["href"]
                 if href.startswith("/"):
                     href = "https://www.trendforce.com" + href
-                # 정확한 패턴만 매칭 — "helium spot-price" 같은 기사 제외
                 if ("insights-memory-spot-price-update" in href or
                         "memory-spot-price-update" in href):
                     candidates.append(href)
@@ -326,14 +285,10 @@ def _find_latest_article_url(scraper):
                 candidates.sort(reverse=True)
                 log.info(f"[article search] 후보 {len(candidates)}건 → {candidates[0]}")
                 return candidates[0]
-            # 모든 링크 로깅 (디버그)
-            all_hrefs = [a["href"] for a in soup.find_all("a", href=True)
-                         if str(today.year) in a["href"] and "news" in a["href"]]
-            log.info(f"[article search] {list_url} 내 {today.year}년 뉴스 링크 상위10: {all_hrefs[:10]}")
         except Exception as e:
             log.warning(f"[article search] {list_url} 오류: {e}")
 
-    # ── 2. 날짜 기반 URL 직접 구성 (화~수 발행 패턴) ──────────────────────
+    # 날짜 기반 URL 직접 구성 (최근 21일)
     tried = set()
     for days_ago in range(0, 21):
         dt = today - timedelta(days=days_ago)
@@ -385,20 +340,17 @@ def _scrape_article(scraper, url=None):
                     date_str = m.group(1)
                     break
 
-        # 기사 본문 텍스트 — 여러 선택자 시도 후 전체 텍스트 fallback
+        # 기사 본문 텍스트
         article = (soup.find("article") or
                    soup.find(class_=re.compile(r'article-content|post-content|entry-content|content-body')) or
                    soup.find("main"))
         if article:
             text = article.get_text(" ", strip=True)
         else:
-            # script/style 제거 후 전체 텍스트
             for tag in soup(["script", "style", "nav", "header", "footer"]):
                 tag.decompose()
             text = soup.get_text(" ", strip=True)
         log.info(f"[article] 본문 {len(text):,}자")
-        if len(text) < 200:
-            log.info(f"[article] 본문 전체: {text}")
 
         seen = set()
         for pattern, mode in PRICE_PATTERNS:
@@ -538,7 +490,7 @@ def main():
         saved = save_prices(conn, records)
         log.info(f"저장: {saved}건 신규 / {len(records)}건 파싱")
     else:
-        log.warning("수집 데이터 없음 — 기존 데이터 유지 (cloudscraper도 차단된 것으로 보임)")
+        log.error("D램 수집 실패: TrendForce 접근 불가 (Cloudflare 차단 가능성) — 기존 데이터 유지")
 
     export_json(conn)
     conn.close()
