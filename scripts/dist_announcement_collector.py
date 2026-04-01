@@ -1,6 +1,6 @@
 """
 ETF 분배금 공시 수집기
-  KR ETF : pykrx get_etf_dividend_by_date (기본) + KRX API (fallback)
+  KR ETF : KRX 정보데이터시스템 API (MDCSTAT04601 / MDCSTAT04602)
   US ETF : yfinance dividends (이력) + ticker.calendar (예정)
 
 저장 테이블: etf_dist_announcement
@@ -68,90 +68,10 @@ def _to_date_str(v):
     return s if len(s) == 10 and s[4] == "-" else None
 
 
-# ── KR ETF: pykrx ─────────────────────────────────────────────────────────
-
-def collect_kr_via_pykrx(code):
-    """pykrx get_etf_dividend_by_date 로 최근 7개월 + 미래 예정 수집."""
-    try:
-        from pykrx import stock as pykrx_stock
-
-        from_date = (datetime.now() - timedelta(days=210)).strftime("%Y%m%d")
-        to_date   = (datetime.now() + timedelta(days=90)).strftime("%Y%m%d")
-
-        df = pykrx_stock.get_etf_dividend_by_date(from_date, to_date, code)
-        if df is None or df.empty:
-            log.warning(f"[{code}] pykrx 분배금 데이터 없음")
-            return []
-
-        log.info(f"[{code}] pykrx 분배금 컬럼: {list(df.columns)}")
-        log.info(f"[{code}] 분배금 데이터({len(df)}건):\n{df.to_string()}")
-
-        today  = datetime.now().strftime("%Y-%m-%d")
-        records = []
-
-        for idx, row in df.iterrows():
-            payment_date = _to_date_str(idx)
-            if not payment_date:
-                continue
-
-            # 분배금액 후보 필드
-            amount = None
-            for f in ("현금분배금", "분배금액", "분배금", "Amount", "amount"):
-                v = _to_float(row.get(f))
-                if v and v > 0:
-                    amount = v
-                    log.info(f"[{code}] {payment_date} 분배금={amount} ({f})")
-                    break
-
-            if not amount:
-                continue
-
-            # 분배율 후보 필드
-            dist_rate = None
-            for f in ("분배율", "분배금수익률", "수익률"):
-                v = _to_float(row.get(f))
-                if v is not None:
-                    dist_rate = v
-                    break
-
-            # 기준일
-            record_date = None
-            for f in ("기준일", "배당기준일"):
-                v = _to_date_str(row.get(f))
-                if v:
-                    record_date = v
-                    break
-
-            # 배당락일
-            ex_div_date = None
-            for f in ("배당락일", "배락일", "배당락"):
-                v = _to_date_str(row.get(f))
-                if v:
-                    ex_div_date = v
-                    break
-
-            records.append({
-                "code":         code,
-                "record_date":  record_date,
-                "ex_div_date":  ex_div_date,
-                "payment_date": payment_date,
-                "amount":       amount,
-                "dist_rate":    dist_rate,
-                "is_upcoming":  1 if payment_date > today else 0,
-            })
-
-        log.info(f"[{code}] pykrx 분배금 {len(records)}건 파싱 완료")
-        return records
-
-    except Exception as e:
-        log.error(f"[{code}] pykrx 분배금 수집 오류: {type(e).__name__}: {e}")
-        return []
-
-
-# ── KR ETF: KRX 데이터 API (fallback) ────────────────────────────────────
+# ── KR ETF: KRX 데이터 API ────────────────────────────────────────────────
 
 def collect_kr_via_krx_api(code):
-    """KRX 정보데이터시스템 API로 ETF 분배금 현황 수집 (pykrx 실패 시 fallback)."""
+    """KRX 정보데이터시스템 API로 ETF 분배금 현황 수집."""
     import requests
 
     url     = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
@@ -361,10 +281,15 @@ def main():
         log.info(f"══ {code} ({etf.get('name')}) ══")
 
         if country == "KR":
-            records = collect_kr_via_pykrx(code)
+            records = collect_kr_via_krx_api(code)
             if not records:
-                log.info(f"[{code}] pykrx 실패 → KRX API fallback")
-                records = collect_kr_via_krx_api(code)
+                # 순수 숫자 코드(493810 등)는 yfinance .KS로 시도
+                if code.isdigit():
+                    log.info(f"[{code}] KRX API 실패 → yfinance {code}.KS fallback")
+                    records = collect_us_via_yfinance(f"{code}.KS")
+                    # code 필드를 원래 KR 코드로 덮어쓰기
+                    for r in records:
+                        r["code"] = code
         else:
             records = collect_us_via_yfinance(code)
 

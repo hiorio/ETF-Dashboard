@@ -158,9 +158,9 @@ jobs:
           # 변경사항이 있을 때만 커밋
           git diff --cached --quiet || \
             git commit -m "chore: weekly ETF data update $(date +'%Y-%m-%d') [skip ci]"
-          # push 전 rebase → 충돌 시 최대 3회 재시도
+          # push 전 rebase → unstaged 변경은 자동 stash, 충돌 시 최대 3회 재시도
           for i in 1 2 3; do
-            git pull --rebase origin main && git push && break
+            git pull --rebase --autostash origin main && git push && break
             echo "::warning::push 실패 (${i}/3) — 재시도 대기..."
             sleep $((i * 10))
           done
