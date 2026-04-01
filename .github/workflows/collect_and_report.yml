@@ -76,6 +76,12 @@ jobs:
       - name: Collect ETF data
         run: python3 scripts/collector.py
 
+      - name: Collect distribution announcements
+        run: |
+          # 실패해도 ETF 수집에 영향 없음
+          python3 scripts/dist_announcement_collector.py || \
+            echo "::warning::분배금 공시 수집 실패 (기존 데이터 유지)"
+
       - name: Generate HTML report
         run: python3 scripts/report.py
 

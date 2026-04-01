@@ -116,11 +116,38 @@ def load_data():
     """).fetchall()
     total_dist_since_listing = {r["code"]: r["total"] for r in all_dists}
 
+    # 분배금 공시 (최근 7개월 + 미래 예정)
+    cutoff_da = (datetime.now() - timedelta(days=210)).strftime("%Y-%m-%d")
+    announcement_rows = []
+    try:
+        announcement_rows = conn.execute("""
+            SELECT
+                a.code, a.record_date, a.ex_div_date,
+                a.payment_date, a.amount, a.dist_rate, a.is_upcoming,
+                m.name, m.country
+            FROM etf_dist_announcement a
+            JOIN etf_meta m ON m.code = a.code
+            WHERE a.payment_date >= ?
+            ORDER BY
+                a.is_upcoming DESC,
+                CASE WHEN a.is_upcoming = 1 THEN a.payment_date END ASC,
+                CASE WHEN a.is_upcoming = 0 THEN a.payment_date END DESC
+        """, (cutoff_da,)).fetchall()
+    except Exception:
+        pass  # 테이블 없으면 빈 리스트
+
     conn.close()
-    return [dict(r) for r in rows], [dict(r) for r in history], monthly_dists, total_dist_since_listing
+    return (
+        [dict(r) for r in rows],
+        [dict(r) for r in history],
+        monthly_dists,
+        total_dist_since_listing,
+        [dict(r) for r in announcement_rows],
+    )
 
 
-def build_html(rows, history, monthly_dists, total_dist_since_listing):
+def build_html(rows, history, monthly_dists, total_dist_since_listing, announcements=None):
+    announcements = announcements or []
     updated = rows[0]["collected_at"] if rows else "데이터 없음"
     now = datetime.now().strftime("%Y-%m-%d %H:%M KST")
 
@@ -244,6 +271,94 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
         '<tr><td colspan="17" class="no-data">아직 수집된 데이터가 없습니다.<br>'
         'GitHub Actions에서 워크플로우를 실행해 주세요.</td></tr>'
     )
+
+    # ── 분배금 공시 섹션 ─────────────────────────────────
+    def announcement_section_html():
+        if not announcements:
+            return '<p class="muted-note">분배금 공시 데이터 없음 (수집 후 표시됩니다)</p>'
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        name_map    = {r["code"]: r["name"]    for r in rows}
+        country_map = {r["code"]: r["country"] for r in rows}
+
+        def amt_fmt(a, code):
+            country = country_map.get(code, "KR")
+            if country == "KR":
+                return f"{a:,.0f}원"
+            return f"${a:.4f}"
+
+        ann_rows = []
+        for a in announcements:
+            code    = a["code"]
+            country = country_map.get(code, "KR")
+            name    = name_map.get(code, code)
+
+            payment_date = a.get("payment_date") or "-"
+            record_date  = a.get("record_date")  or "-"
+            ex_div_date  = a.get("ex_div_date")  or "-"
+            amount       = a.get("amount")
+            dist_rate    = a.get("dist_rate")
+            is_upcoming  = a.get("is_upcoming", 0)
+
+            # 상태 배지
+            if is_upcoming:
+                status_badge = '<span class="badge upcoming">지급예정</span>'
+            elif payment_date <= today:
+                status_badge = '<span class="badge paid">지급완료</span>'
+            else:
+                status_badge = ""
+
+            country_badge = (
+                '<span class="badge kr">KR</span>'
+                if country == "KR"
+                else '<span class="badge us">US</span>'
+            )
+
+            amt_str  = amt_fmt(amount, code)  if amount  else "-"
+            rate_str = f"{dist_rate:.3f}%"    if dist_rate else "-"
+            pay_row_cls = "upcoming-row" if is_upcoming else ""
+
+            ann_rows.append(f"""
+            <tr class="{pay_row_cls}">
+              <td class="name-cell-sm">
+                <div style="font-weight:500">{name}</div>
+                <div style="margin-top:3px">{country_badge} {status_badge}</div>
+              </td>
+              <td>{record_date}</td>
+              <td>{ex_div_date}</td>
+              <td style="font-weight:600;color:{'#fbbf24' if is_upcoming else 'inherit'}">{payment_date}</td>
+              <td class="dist-amt">{amt_str}</td>
+              <td>{rate_str}</td>
+            </tr>""")
+
+        if not ann_rows:
+            return '<p class="muted-note">최근 분배금 공시 없음</p>'
+
+        ann_rows_html = "\n".join(ann_rows)
+        return f"""
+        <div class="table-wrap">
+          <table class="dist-table">
+            <thead>
+              <tr>
+                <th style="text-align:left">ETF</th>
+                <th>기준일</th>
+                <th>배당락일</th>
+                <th>지급예정일</th>
+                <th>1주당 분배금</th>
+                <th>분배율</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ann_rows_html}
+            </tbody>
+          </table>
+        </div>
+        <p style="color:var(--muted);font-size:0.75rem;margin-top:6px;">
+          매일 자동 업데이트 &nbsp;|&nbsp; KR: pykrx/KRX API &nbsp;|&nbsp; US: Yahoo Finance
+        </p>
+        """
+
+    announcement_section = announcement_section_html()
 
     # ── 월별 분배금 섹션 ────────────────────────────────
     def dist_section_html():
@@ -395,6 +510,9 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
   .badge.us {{ background: #3b1f1f; color: #f87171; }}
   .badge.cycle {{ background: #1f2d1f; color: #86efac; }}
   .badge.erosion {{ background: #3b1a1a; color: #fca5a5; }}
+  .badge.upcoming {{ background: #1a2e1a; color: #4ade80; }}
+  .badge.paid {{ background: #1f2937; color: #9ca3af; }}
+  tr.upcoming-row td {{ background: rgba(74,222,128,0.04); }}
   .no-data {{
     text-align: center !important;
     padding: 40px !important;
@@ -479,6 +597,9 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
     ★★ 상장이후 총수익률 = 상장이후 NAV변화 + 상장이후 누적분배율 &nbsp;|&nbsp;
     ⚠ 자본침식 = 상장이후 NAV -5% 이하이면서 분배금 지급 중
   </p>
+
+  <div class="section-title">📢 분배금 공시 현황 (최근 7개월 + 예정)</div>
+  {announcement_section}
 
   <div class="section-title">💰 월별 분배금 이력 (직전 1년)</div>
   {dist_section}
@@ -648,13 +769,13 @@ DATA.datasets.forEach((ds, idx) => {{
 
 def main():
     DOCS_DIR.mkdir(exist_ok=True)
-    rows, history, monthly_dists, total_dist_since_listing = load_data()
+    rows, history, monthly_dists, total_dist_since_listing, announcements = load_data()
 
-    html = build_html(rows, history, monthly_dists, total_dist_since_listing)
+    html = build_html(rows, history, monthly_dists, total_dist_since_listing, announcements)
     OUT_PATH.write_text(html, encoding="utf-8")
 
     print(f"리포트 생성 완료: {OUT_PATH}")
-    print(f"  ETF {len(rows)}개  이력 {len(history)}행  월별분배금 {sum(len(v) for v in monthly_dists.values())}건")
+    print(f"  ETF {len(rows)}개  이력 {len(history)}행  월별분배금 {sum(len(v) for v in monthly_dists.values())}건  공시 {len(announcements)}건")
 
 
 if __name__ == "__main__":
