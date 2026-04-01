@@ -105,64 +105,43 @@ def _scrape_price_page(scraper):
         if res.status_code != 200:
             return results
 
+        # ── 디버그: HTML 덤프 (구조 파악용, 첫 실행 후 제거 예정) ───────────
+        dump_path = BASE_DIR / "docs" / "_debug_trendforce.html"
+        dump_path.write_text(res.text, encoding="utf-8")
+        log.info(f"[price page] HTML 덤프 저장: {dump_path}")
+
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(res.text, "lxml")
 
-        # ── 디버그: 페이지 첫 1000자 ───────────────────────────────────────
-        page_text = soup.get_text(" ", strip=True)
-        log.info(f"[price page] 페이지 텍스트 앞 500자: {page_text[:500]}")
-
-        # ── Next.js __NEXT_DATA__ 탐색 ─────────────────────────────────────
+        # ── Schema.org Dataset 스크립트 전체 로깅 ─────────────────────────
         for tag in soup.find_all("script"):
-            sid = tag.get("id", "")
             text = tag.string or ""
-
-            if sid == "__NEXT_DATA__" or '"buildId"' in text:
-                log.info(f"[price page] __NEXT_DATA__ 발견 ({len(text):,}자)")
-                try:
-                    nd = json.loads(text)
-                    page_props = (nd.get("props") or {}).get("pageProps") or nd
-                    log.info(f"[price page] pageProps keys: {list(page_props.keys())[:20]}")
-                    parsed = _deep_search_prices(page_props)
-                    log.info(f"[price page] __NEXT_DATA__ 파싱 {len(parsed)}건")
-                    results.extend(parsed)
-                except Exception as e:
-                    log.warning(f"[price page] __NEXT_DATA__ 파싱 오류: {e}")
-                    log.info(f"[price page] __NEXT_DATA__ 앞 300자: {text[:300]}")
-                break
-
-            # Schema.org Dataset 스크립트 — 가격 데이터 포함 가능성
             if '"Dataset"' in text or "DRAM Spot Price" in text:
-                log.info(f"[price page] Schema/Dataset 스크립트 발견 전체내용: {text}")
+                log.info(f"[price page] Schema Dataset 전체:\n{text}")
 
-        if not results:
-            # ── 모든 script 태그 요약 로깅 ─────────────────────────────────
-            for i, tag in enumerate(soup.find_all("script")[:10]):
-                text = tag.string or ""
-                if len(text) > 100:
-                    log.info(f"[price page] script[{i}] len={len(text)} 앞100: {text[:100].strip()}")
+        # ── 가격 관련 요소 탐색 ────────────────────────────────────────────
+        # data-* 속성에서 API URL 힌트 찾기
+        for el in soup.find_all(attrs={"data-url": True}):
+            log.info(f"[price page] data-url 요소: tag={el.name} data-url={el['data-url']}")
+        for el in soup.find_all(attrs={"data-api": True}):
+            log.info(f"[price page] data-api 요소: {el.get('data-api')}")
+        for el in soup.find_all(attrs={"data-src": True}):
+            log.info(f"[price page] data-src 요소: {el.get('data-src')}")
 
-            # ── 일반 JSON 패턴 탐색 ────────────────────────────────────────
-            full_text = res.text
-            for pat in (
-                r'"spot[Pp]rice[s]?"\s*:\s*(\[.*?\])',
-                r'"dram"\s*:\s*(\[.*?\])',
-                r'"prices"\s*:\s*(\[.*?\])',
-                r'"data"\s*:\s*(\[.*?"price".*?\])',
-            ):
-                m = re.search(pat, full_text, re.DOTALL)
-                if m:
-                    try:
-                        items = json.loads(m.group(1))
-                        parsed = _parse_price_json(items)
-                        if parsed:
-                            log.info(f"[price page] JSON 패턴 '{pat[:30]}' → {len(parsed)}건")
-                            results.extend(parsed)
-                    except Exception:
-                        pass
+        # 외부 JS 파일 목록 (API 패턴 힌트)
+        js_srcs = [t["src"] for t in soup.find_all("script", src=True)]
+        log.info(f"[price page] 외부 JS 파일 {len(js_srcs)}개: {js_srcs[:8]}")
 
-        if not results:
-            results.extend(_parse_price_table(soup))
+        # fetch() / XMLHttpRequest URL 패턴 탐색
+        full_text = res.text
+        api_patterns = re.findall(r'(?:fetch|axios\.get|url)\s*[:(]\s*["\']([^"\']+(?:api|price|dram|chart)[^"\']*)["\']', full_text, re.IGNORECASE)
+        if api_patterns:
+            log.info(f"[price page] API URL 패턴 발견: {api_patterns[:10]}")
+
+        # 가격처럼 보이는 숫자들 ($ + 소수점) 탐색
+        price_candidates = re.findall(r'\$\s*(\d+\.\d{2,4})', full_text)
+        if price_candidates:
+            log.info(f"[price page] 가격 패턴 후보 {len(price_candidates)}개: {price_candidates[:20]}")
 
         log.info(f"[price page] 최종 {len(results)}건")
     except Exception as e:

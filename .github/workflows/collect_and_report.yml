@@ -50,7 +50,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/etf.db docs/index.html docs/dram.html docs/dram.json
+          git add data/etf.db docs/index.html docs/dram.html docs/dram.json docs/_debug_trendforce.html 2>/dev/null || true
           # 변경사항이 있을 때만 커밋
           git diff --cached --quiet || \
             git commit -m "chore: weekly ETF data update $(date +'%Y-%m-%d') [skip ci]"
