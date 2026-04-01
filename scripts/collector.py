@@ -3,10 +3,13 @@ ETF 데이터 수집기
 실행: python3 scripts/collector.py
 
 수집 전략:
-  KR ETF: pykrx (기본) → yfinance {code}.KS (fallback)
-           분배금은 yfinance로 별도 수집
-           AUM/NAV per share는 네이버 금융 API
-  US ETF: yfinance (가격 + 분배금 + AUM 일괄)
+  KR ETF:
+    가격/수익률  - pykrx (기본) → yfinance {code}.KS (fallback)
+    분배금       - yfinance {code}.KS
+    AUM          - KRX API (기본) → Naver API (fallback)
+    NAV/주       - pykrx NAV 컬럼 (기본) → KRX API → Naver API (fallback)
+  US ETF:
+    전체         - yfinance (가격 + 분배금 + AUM)
 """
 
 import json
@@ -140,7 +143,17 @@ def save_monthly_dists(conn, code, monthly_dists):
     conn.commit()
 
 
-# ── 결과 빈 dict ───────────────────────────────────────────────────────────
+# ── 공통 유틸 ─────────────────────────────────────────────────────────────
+
+def _to_float(v):
+    """쉼표·공백 제거 후 float 변환. 실패하면 None."""
+    if v in (None, "", "-", "N/A"):
+        return None
+    try:
+        return float(str(v).replace(",", "").strip())
+    except (ValueError, TypeError):
+        return None
+
 
 def _empty_result():
     return {
@@ -155,10 +168,166 @@ def _empty_result():
     }
 
 
-# ── pykrx (KR ETF 가격/NAV) ────────────────────────────────────────────────
+# ── KRX 데이터 API (KR ETF AUM + NAV/주) ──────────────────────────────────
+
+def _get_krx_etf_info(code):
+    """KRX 정보데이터시스템 API로 KR ETF 기준가격(NAV/주) + 순자산총액(AUM) 수집.
+
+    주말·공휴일 대비 최근 5 영업일을 순서대로 시도.
+    반환: (nav_per_share: float|None, aum_won: float|None)
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Referer": "https://data.krx.co.kr/",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+
+    # 최근 5일 시도 (공휴일/주말 대응)
+    for days_back in range(0, 6):
+        date_str = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
+        for bld in (
+            "dbms/MDC/STAT/standard/MDCSTAT04401",  # ETF 순자산가치현황
+            "dbms/MDC/STAT/standard/MDCSTAT04301",  # ETF 기본정보
+        ):
+            try:
+                payload = {
+                    "bld": bld,
+                    "isuCd": code,
+                    "isuCd2": code,
+                    "baseDd": date_str,
+                    "share": "1",
+                    "money": "1",
+                    "csvxls_isNo": "false",
+                }
+                res = requests.post(url, data=payload, headers=headers, timeout=10)
+                if res.status_code != 200:
+                    continue
+                data = res.json()
+                items = data.get("output") or data.get("OutBlock_1") or []
+                if not items:
+                    continue
+
+                item = items[0]
+                # Actions 로그에서 실제 field 이름 확인 가능하도록 출력
+                log.info(f"[{code}] KRX({bld.split('/')[-1]}, {date_str}) keys: {list(item.keys())}")
+
+                # 기준가격(NAV/주) 후보 필드
+                nav = None
+                for f in ("BAS_PRC", "CLSPRC", "NAV", "NAV_PRC", "navPrice"):
+                    nav = _to_float(item.get(f))
+                    if nav and nav > 100:
+                        log.info(f"[{code}] KRX NAV/주={nav:,.0f} ({f})")
+                        break
+                    nav = None
+
+                # 순자산총액(AUM) 후보 필드
+                # KRX 단위는 보통 백만원 또는 억원 — 값 크기로 판별
+                aum = None
+                for f in ("NETASST_TOTAMT", "NET_ASST_TOTAMT", "FUND_NETASST",
+                          "MKTCAP", "TOT_NETASST", "netAssetTotAmt"):
+                    raw = _to_float(item.get(f))
+                    if raw and raw > 0:
+                        # 백만원 단위 변환 (1억 이상이면 이미 원 단위로 처리)
+                        if raw < 1e9:           # 백만원 단위로 추정
+                            aum = raw * 1_000_000
+                        else:                   # 이미 원 단위
+                            aum = raw
+                        log.info(f"[{code}] KRX AUM={aum/1e8:,.0f}억원 ({f}, raw={raw})")
+                        break
+
+                if nav is not None or aum is not None:
+                    return nav, aum
+
+            except Exception as e:
+                log.warning(f"[{code}] KRX API 오류 ({date_str}): {type(e).__name__}: {e}")
+
+    log.warning(f"[{code}] KRX API 수집 실패")
+    return None, None
+
+
+# ── 네이버 금융 API (KR ETF AUM + NAV/주 fallback) ────────────────────────
+
+def _get_naver_etf(code):
+    """네이버 금융 모바일 API로 KR ETF AUM + NAV/주 수집 (KRX API 실패 시 fallback).
+
+    반환: (aum_won: float|None, nav_per_share: float|None)
+    """
+    aum, nav = None, None
+
+    endpoints = [
+        ("basic",       f"https://m.stock.naver.com/api/stock/{code}/basic"),
+        ("etfAnalysis", f"https://m.stock.naver.com/api/stock/{code}/etfAnalysis"),
+        ("etfSummary",  f"https://m.stock.naver.com/api/stock/{code}/etfSummary"),
+        ("etfInfo",     f"https://m.stock.naver.com/api/stock/{code}/etfInfo"),
+        ("summaryInfo", f"https://m.stock.naver.com/api/stock/{code}/summaryInfo"),
+    ]
+
+    for ep_name, url in endpoints:
+        if aum is not None and nav is not None:
+            break
+        try:
+            res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            log.info(f"[{code}] Naver {ep_name} → {res.status_code}")
+            if res.status_code != 200:
+                continue
+
+            d = res.json()
+            if isinstance(d, list):
+                d = d[0] if d else {}
+
+            # 전체 non-null 응답 로깅 (빈 dict 방지)
+            non_null = {k: v for k, v in d.items() if v not in (None, "", "-", "0", 0)}
+            if not non_null:
+                continue
+            log.info(f"[{code}] Naver {ep_name} non-null fields: {list(non_null.keys())[:20]}")
+
+            # AUM 후보 필드 (원 단위 또는 억원 단위)
+            if aum is None:
+                for f in ("navTotalAsset", "totalNetAsset", "fundNetAsset",
+                          "marketValue", "marketCap", "totalAsset",
+                          "fundTotalAsset", "etfTotalAsset", "netAsset",
+                          "fundSize", "netAssetValue", "etfNetAsset"):
+                    raw = _to_float(d.get(f))
+                    if raw and raw > 0:
+                        # 단위 추정: 1조(1e12) 이하이면 원, 그 이상은 백만원 등
+                        aum = raw if raw > 1e8 else raw * 1e8
+                        if aum > 1e13:   # 비현실적으로 큰 값 → 단위 조정
+                            aum = raw
+                        log.info(f"[{code}] Naver AUM={aum/1e8:,.1f}억원 ({ep_name}/{f})")
+                        break
+                    aum = None
+
+            # NAV/주 후보 필드
+            if nav is None:
+                for f in ("iNav", "nav", "navPrice", "navPerUnit", "iNavValue",
+                          "estimatedNav", "netAssetValue", "etfNav", "basePrice",
+                          "closingPrice", "currentPrice"):
+                    raw = _to_float(d.get(f))
+                    if raw and raw > 100:
+                        nav = raw
+                        log.info(f"[{code}] Naver NAV/주={nav:,.0f} ({ep_name}/{f})")
+                        break
+                    nav = None
+
+        except Exception as e:
+            log.warning(f"[{code}] Naver {ep_name} 오류: {e}")
+
+    if aum is None:
+        log.warning(f"[{code}] Naver AUM 수집 실패 (모든 endpoint 소진)")
+    if nav is None:
+        log.warning(f"[{code}] Naver NAV/주 수집 실패 (모든 endpoint 소진)")
+
+    return aum, nav
+
+
+# ── pykrx (KR ETF 가격/NAV 이력) ──────────────────────────────────────────
 
 def collect_kr_via_pykrx(code, listed_date, dividend_cycle):
-    """pykrx로 KR ETF 가격·NAV 이력 수집. 지원하지 않는 코드는 None 반환."""
+    """pykrx로 KR ETF 가격·NAV 이력 수집.
+    신형 코드 등 미지원 시 None 반환 (yfinance fallback 트리거).
+    """
     try:
         from pykrx import stock as pykrx_stock
 
@@ -168,24 +337,37 @@ def collect_kr_via_pykrx(code, listed_date, dividend_cycle):
 
         df = pykrx_stock.get_etf_ohlcv_by_date(from_date, today, code)
         if df is None or df.empty:
-            log.warning(f"[{code}] pykrx 데이터 없음 (신형 코드 미지원 가능)")
+            log.warning(f"[{code}] pykrx 데이터 없음")
             return None
 
-        # 컬럼명 호환 처리
-        close_col = "종가" if "종가" in df.columns else "Close"
-        nav_col   = "NAV"  if "NAV"  in df.columns else None
+        log.info(f"[{code}] pykrx 컬럼: {list(df.columns)}")
 
-        if close_col not in df.columns:
-            log.warning(f"[{code}] pykrx 종가 컬럼 없음: {list(df.columns)}")
+        # 종가 컬럼 탐색
+        close_col = None
+        for c in ("종가", "Close", "close"):
+            if c in df.columns:
+                close_col = c
+                break
+        if close_col is None:
+            log.warning(f"[{code}] pykrx 종가 컬럼 없음")
             return None
+
+        # NAV 컬럼 탐색
+        nav_col = None
+        for c in ("NAV", "순자산가치", "기준가격", "nav"):
+            if c in df.columns:
+                nav_col = c
+                break
 
         price_now = float(df[close_col].iloc[-1])
         nav_now = None
-        if nav_col and not pd.isna(df[nav_col].iloc[-1]):
-            nav_now = float(df[nav_col].iloc[-1])
+        if nav_col:
+            raw_nav = df[nav_col].iloc[-1]
+            if not pd.isna(raw_nav) and float(raw_nav) > 100:
+                nav_now = float(raw_nav)
 
         result = _empty_result()
-        result["nav_current"]  = price_now
+        result["nav_current"] = price_now
         result["nav_per_share"] = nav_now
 
         # 전일가 / 등락
@@ -200,26 +382,27 @@ def collect_kr_via_pykrx(code, listed_date, dividend_cycle):
 
         def pct_return(days_ago):
             cutoff = pd.Timestamp(now - timedelta(days=days_ago))
-            # pykrx index는 tz-naive
             sub = df[df.index >= cutoff]
-            if not sub.empty and float(sub[close_col].iloc[0]):
-                return round((price_now / float(sub[close_col].iloc[0]) - 1) * 100, 2)
+            if not sub.empty:
+                base = float(sub[close_col].iloc[0])
+                if base:
+                    return round((price_now / base - 1) * 100, 2)
             return None
 
-        result["return_1m"]   = pct_return(30)
-        result["return_3m"]   = pct_return(91)
-        result["return_6m"]   = pct_return(182)
-        result["nav_change_1y"] = pct_return(365)
-        result["nav_change_1m"] = result["return_1m"]
-        result["nav_change_3m"] = result["return_3m"]
-        result["nav_change_6m"] = result["return_6m"]
+        r1m = pct_return(30);  r3m = pct_return(91)
+        r6m = pct_return(182); r1y = pct_return(365)
+
+        result["return_1m"] = result["nav_change_1m"] = r1m
+        result["return_3m"] = result["nav_change_3m"] = r3m
+        result["return_6m"] = result["nav_change_6m"] = r6m
+        result["nav_change_1y"] = r1y
 
         p_first = float(df[close_col].iloc[0])
         result["nav_change_since_listing"] = round((price_now / p_first - 1) * 100, 2) if p_first else None
 
         log.info(
             f"[{code}] pykrx 현재가={price_now:,.0f}  전일대비={result['price_change_pct']}%  "
-            f"1M={result['return_1m']}%  1Y={result['nav_change_1y']}%  NAV={nav_now}"
+            f"1M={r1m}%  1Y={r1y}%  NAV/주={nav_now}"
         )
         return result
 
@@ -228,10 +411,12 @@ def collect_kr_via_pykrx(code, listed_date, dividend_cycle):
         return None
 
 
-# ── yfinance (KR·US ETF 가격 + 분배금) ────────────────────────────────────
+# ── yfinance (KR/US ETF 가격 + 분배금) ────────────────────────────────────
 
 def collect_via_yfinance(ticker, listed_date, dividend_cycle):
-    """yfinance로 가격 이력 + 분배금 수집. KR ETF는 {code}.KS 형식으로 전달."""
+    """yfinance로 가격 이력 + 분배금 수집.
+    KR ETF: {code}.KS  |  US ETF: ticker 그대로
+    """
     try:
         import yfinance as yf
 
@@ -252,7 +437,7 @@ def collect_via_yfinance(ticker, listed_date, dividend_cycle):
             result["price_change"]     = round(price_now - prev, 4)
             result["price_change_pct"] = round((price_now / prev - 1) * 100, 2) if prev else None
 
-        # 기간별 수익률 (tz 처리 포함)
+        # 기간별 수익률 (tz-aware 처리)
         now = datetime.now()
         idx_tz = hist.index.tz
 
@@ -262,153 +447,87 @@ def collect_via_yfinance(ticker, listed_date, dividend_cycle):
             if idx_tz:
                 cutoff_ts = cutoff_ts.tz_localize(idx_tz)
             sub = hist[hist.index >= cutoff_ts]
-            if not sub.empty and float(sub["Close"].iloc[0]):
-                return round((price_now / float(sub["Close"].iloc[0]) - 1) * 100, 2)
+            if not sub.empty:
+                base = float(sub["Close"].iloc[0])
+                if base:
+                    return round((price_now / base - 1) * 100, 2)
             return None
 
-        result["return_1m"]   = pct_return(30)
-        result["return_3m"]   = pct_return(91)
-        result["return_6m"]   = pct_return(182)
-        result["nav_change_1y"] = pct_return(365)
-        result["nav_change_1m"] = result["return_1m"]
-        result["nav_change_3m"] = result["return_3m"]
-        result["nav_change_6m"] = result["return_6m"]
+        r1m = pct_return(30);  r3m = pct_return(91)
+        r6m = pct_return(182); r1y = pct_return(365)
+
+        result["return_1m"] = result["nav_change_1m"] = r1m
+        result["return_3m"] = result["nav_change_3m"] = r3m
+        result["return_6m"] = result["nav_change_6m"] = r6m
+        result["nav_change_1y"] = r1y
 
         p_first = float(hist["Close"].iloc[0])
         result["nav_change_since_listing"] = round((price_now / p_first - 1) * 100, 2) if p_first else None
 
         # 분배금
-        divs = yf_ticker.dividends
-        if not divs.empty:
-            # tz 제거
-            try:
-                divs.index = divs.index.tz_convert(None)
-            except TypeError:
+        try:
+            divs = yf_ticker.dividends
+            if not divs.empty:
+                # tz 제거
                 try:
-                    divs.index = divs.index.tz_localize(None)
+                    divs.index = divs.index.tz_convert(None)
                 except TypeError:
-                    pass
+                    try:
+                        divs.index = divs.index.tz_localize(None)
+                    except TypeError:
+                        pass
 
-            one_year_ago = now - timedelta(days=365)
-            divs_12m = divs[divs.index >= one_year_ago]
+                one_year_ago = now - timedelta(days=365)
+                divs_12m = divs[divs.index >= one_year_ago]
 
-            # 월별 집계 (전체 이력)
-            monthly = divs.resample("ME").sum()
-            monthly = monthly[monthly > 0]
-            result["monthly_dists"] = {
-                ts.strftime("%Y-%m"): round(float(v), 4)
-                for ts, v in monthly.items()
-            }
+                # 월별 집계 (전체 이력)
+                monthly = divs.resample("ME").sum()
+                monthly = monthly[monthly > 0]
+                result["monthly_dists"] = {
+                    ts.strftime("%Y-%m"): round(float(v), 4)
+                    for ts, v in monthly.items()
+                }
 
-            if not divs_12m.empty:
-                dist_12m = float(divs_12m.sum())
-                last_dist = float(divs_12m.iloc[-1])
-                freq = CYCLE_FREQ.get(dividend_cycle, 12)
+                if not divs_12m.empty:
+                    dist_12m  = float(divs_12m.sum())
+                    last_dist = float(divs_12m.iloc[-1])
+                    freq = CYCLE_FREQ.get(dividend_cycle, 12)
 
-                result["dist_rate_12m"]        = round(dist_12m / price_now * 100, 2)
-                result["dist_rate_monthly"]    = round(last_dist / price_now * 100, 2) if last_dist else None
-                result["dist_rate_annualized"] = round(last_dist * freq / price_now * 100, 2) if last_dist else None
+                    result["dist_rate_12m"]        = round(dist_12m  / price_now * 100, 2)
+                    result["dist_rate_monthly"]    = round(last_dist / price_now * 100, 2) if last_dist else None
+                    result["dist_rate_annualized"] = round(last_dist * freq / price_now * 100, 2) if last_dist else None
+        except Exception as e:
+            log.warning(f"[{ticker}] yfinance 분배금 오류: {e}")
 
-        # AUM (US ETF는 yfinance info에서 직접 조회)
+        # AUM (US ETF 우선, KR ETF는 보조)
         try:
             info = yf_ticker.info
-            aum_val = info.get("totalAssets")
-            if aum_val and float(aum_val) > 0:
-                result["aum"] = float(aum_val)
+            aum_val = _to_float(info.get("totalAssets"))
+            if aum_val and aum_val > 0:
+                result["aum"] = aum_val
+                log.info(f"[{ticker}] yfinance AUM={aum_val:,.0f}")
+            else:
+                # fast_info 보조: shares * close
+                try:
+                    fi = yf_ticker.fast_info
+                    shares = getattr(fi, "shares", None)
+                    if shares and price_now:
+                        result["aum"] = float(shares) * price_now
+                        log.info(f"[{ticker}] yfinance AUM(shares×price)={result['aum']:,.0f}")
+                except Exception:
+                    pass
         except Exception as e:
             log.warning(f"[{ticker}] yfinance info 오류: {e}")
 
         log.info(
             f"[{ticker}] yfinance 현재가={price_now}  전일대비={result['price_change_pct']}%  "
-            f"1M={result['return_1m']}%  1Y={result['nav_change_1y']}%  "
-            f"분배율12M={result['dist_rate_12m']}%"
+            f"1M={r1m}%  1Y={r1y}%  분배율12M={result['dist_rate_12m']}%"
         )
         return result
 
     except Exception as e:
         log.error(f"[{ticker}] yfinance 오류: {type(e).__name__}: {e}")
         return _empty_result()
-
-
-# ── 네이버 금융 API (KR ETF AUM + 순자산가치) ──────────────────────────────
-
-def _get_naver_etf(code):
-    """네이버 금융 모바일 API로 KR ETF 시가총액(AUM) + 순자산가치/주 수집.
-    여러 endpoint/필드를 순서대로 시도하며, 찾은 값 반환."""
-
-    def to_float(v):
-        try:
-            return float(str(v).replace(",", "").strip()) if v not in (None, "", "-", "0") else None
-        except (ValueError, TypeError):
-            return None
-
-    aum, nav = None, None
-
-    # 1. /basic endpoint
-    try:
-        url = f"https://m.stock.naver.com/api/stock/{code}/basic"
-        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        log.info(f"[{code}] Naver basic API {res.status_code}")
-        if res.status_code == 200:
-            data = res.json()
-            for f in ("marketValue", "marketCap", "totalAsset", "fundTotalAsset",
-                      "netAsset", "navTotalAsset", "etfTotalAsset"):
-                aum = to_float(data.get(f))
-                if aum and aum > 1000:
-                    log.info(f"[{code}] AUM={aum:,.0f} (basic/{f})")
-                    break
-                aum = None
-            for f in ("iNav", "nav", "navPrice", "netAssetValue",
-                      "iNavValue", "estimatedNav", "navPerUnit"):
-                nav = to_float(data.get(f))
-                if nav and nav > 100:
-                    log.info(f"[{code}] NAV/주={nav:,.2f} (basic/{f})")
-                    break
-                nav = None
-    except Exception as e:
-        log.warning(f"[{code}] Naver basic API 오류: {e}")
-
-    # 2. ETF 전용 endpoints (basic에서 못 찾은 경우)
-    if aum is None or nav is None:
-        for ep in ("etfAnalysis", "etfSummary", "etfInfo"):
-            try:
-                url2 = f"https://m.stock.naver.com/api/stock/{code}/{ep}"
-                res2 = requests.get(url2, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-                if res2.status_code != 200:
-                    continue
-                d2 = res2.json()
-                if isinstance(d2, list):
-                    d2 = d2[0] if d2 else {}
-
-                if aum is None:
-                    for f in ("navTotalAsset", "totalNetAsset", "fundNetAsset",
-                              "marketValue", "totalAsset", "etfTotalAsset"):
-                        aum = to_float(d2.get(f))
-                        if aum and aum > 1000:
-                            log.info(f"[{code}] AUM={aum:,.0f} ({ep}/{f})")
-                            break
-                        aum = None
-
-                if nav is None:
-                    for f in ("iNav", "nav", "navPrice", "navPerUnit",
-                              "iNavValue", "estimatedNav", "netAssetValue"):
-                        nav = to_float(d2.get(f))
-                        if nav and nav > 100:
-                            log.info(f"[{code}] NAV/주={nav:,.2f} ({ep}/{f})")
-                            break
-                        nav = None
-
-                if aum is not None and nav is not None:
-                    break
-            except Exception as e:
-                log.warning(f"[{code}] Naver {ep} API 오류: {e}")
-
-    if aum is None:
-        log.warning(f"[{code}] Naver AUM 수집 실패")
-    if nav is None:
-        log.warning(f"[{code}] Naver NAV/주 수집 실패")
-
-    return aum, nav
 
 
 # ── 메인 ──────────────────────────────────────────────────────────────────
@@ -428,15 +547,15 @@ def main():
         code    = etf.get("code") or etf.get("ticker")
         country = etf.get("country")
         cycle   = etf.get("dividend_cycle", "월")
-        log.info(f"── {code} ({etf.get('name')}) ──")
+        log.info(f"══ {code} ({etf.get('name')}) ══")
 
         upsert_meta(conn, etf)
 
-        aum = None
+        aum          = None
         nav_per_share = None
 
         if country == "KR":
-            # 1차: pykrx (KRX 공식 데이터)
+            # ── 1) 가격·수익률: pykrx 우선 ──────────────────────────────
             d = collect_kr_via_pykrx(code, etf["listed_date"], cycle)
 
             if d is not None:
@@ -448,31 +567,61 @@ def main():
                     d["dist_rate_annualized"] = dist_data["dist_rate_annualized"]
                     d["monthly_dists"]        = dist_data["monthly_dists"]
             else:
-                # 2차: yfinance fallback (신형 코드 등 pykrx 미지원)
-                log.info(f"[{code}] yfinance fallback ({code}.KS)")
+                # pykrx 실패 → yfinance 전체 fallback (신형 코드 등)
+                log.info(f"[{code}] pykrx 실패 → yfinance fallback ({code}.KS)")
                 d = collect_via_yfinance(f"{code}.KS", etf["listed_date"], cycle)
 
-            # 네이버 금융: AUM + NAV per share 보완
-            naver_aum, naver_nav = _get_naver_etf(code)
-            aum = naver_aum or d.get("aum")
-            nav_per_share = naver_nav or d.get("nav_per_share")
+            # ── 2) AUM: KRX API → Naver API → yfinance KS ───────────────
+            krx_nav, krx_aum = _get_krx_etf_info(code)
+            if krx_aum:
+                aum = krx_aum
+                log.info(f"[{code}] AUM=KRX {aum/1e8:,.0f}억원")
+            else:
+                naver_aum, naver_nav = _get_naver_etf(code)
+                if naver_aum:
+                    aum = naver_aum
+                    log.info(f"[{code}] AUM=Naver {aum/1e8:,.0f}억원")
+                else:
+                    # 최후 fallback: yfinance KS (USD → 환율 미적용, 대략적 값)
+                    ks_aum = d.get("aum")
+                    if ks_aum:
+                        aum = ks_aum
+                        log.warning(f"[{code}] AUM=yfinance(KS) fallback (단위 불확실)")
+
+            # ── 3) NAV/주: pykrx NAV → KRX API → Naver API 순 ──────────
+            if d.get("nav_per_share"):
+                nav_per_share = d["nav_per_share"]
+                log.info(f"[{code}] NAV/주=pykrx {nav_per_share:,.0f}원")
+            elif krx_nav:
+                nav_per_share = krx_nav
+                log.info(f"[{code}] NAV/주=KRX {nav_per_share:,.0f}원")
+            else:
+                _, naver_nav = _get_naver_etf(code)
+                if naver_nav:
+                    nav_per_share = naver_nav
+                    log.info(f"[{code}] NAV/주=Naver {nav_per_share:,.0f}원")
 
         else:
-            # US ETF: yfinance 일괄 수집
+            # ── US ETF: yfinance 일괄 수집 ───────────────────────────────
             d = collect_via_yfinance(code, etf["listed_date"], cycle)
-            aum = d.get("aum")
+            aum          = d.get("aum")
             nav_per_share = None  # US ETF: 가격 ≈ NAV
 
-        # 실질수익률 = 분배율 + NAV 변화율
+        # 실질수익률 = 분배율 12M + NAV 변화율 1Y
         real_return_1y = None
         if d.get("dist_rate_12m") is not None and d.get("nav_change_1y") is not None:
             real_return_1y = round(d["dist_rate_12m"] + d["nav_change_1y"], 2)
 
-        # 수집 성공 여부 확인 (핵심 데이터 존재 시 성공)
+        # 수집 결과 요약
         if d.get("nav_current") is not None:
             success_count += 1
+            log.info(
+                f"[{code}] ✓ 현재가={d['nav_current']}  AUM={'있음' if aum else '없음'}  "
+                f"NAV/주={'있음' if nav_per_share else '없음'}  "
+                f"분배율={d.get('dist_rate_12m')}%  1Y={d.get('nav_change_1y')}%"
+            )
         else:
-            log.error(f"[{code}] 핵심 데이터(현재가) 수집 실패 — DB에는 null 저장됨")
+            log.error(f"[{code}] ✗ 현재가 수집 실패")
 
         conn.execute(
             """
@@ -507,9 +656,8 @@ def main():
 
     conn.close()
     log.info(f"수집 완료: {success_count}/{len(etfs)}개 성공")
-
     if success_count < len(etfs):
-        log.error(f"수집 실패 ETF 존재: {len(etfs) - success_count}개")
+        log.error(f"수집 실패: {len(etfs) - success_count}개 ETF 현재가 없음")
 
 
 if __name__ == "__main__":
