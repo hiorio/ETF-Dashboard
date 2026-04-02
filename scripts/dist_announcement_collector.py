@@ -199,19 +199,20 @@ def collect_kr_via_krx_api(code):
 
 # ── US ETF: yfinance ──────────────────────────────────────────────────────
 
-def collect_us_via_yfinance(ticker):
-    """yfinance dividends(이력) + calendar(예정)으로 US ETF 분배금 수집."""
+def collect_us_via_yfinance(ticker, pay_offset=14):
+    """yfinance dividends(이력) + calendar(예정)으로 분배금 수집.
+
+    pay_offset: 배당락일 → 지급예정일 추정 일수
+      US ETF: 14일 (기본값)
+      KR 월배당: 20일 (caller가 전달)
+      KR 주배당: 5일  (caller가 전달)
+    """
     try:
         import yfinance as yf
 
         t     = yf.Ticker(ticker)
         today = datetime.now().strftime("%Y-%m-%d")
         records = []
-
-        # yfinance.dividends 인덱스 = 배당락일(ex-dividend date)
-        # 실제 지급일은 배당락일 이후 (US: ~14일, KR .KS: ~20일)
-        is_kr = ticker.upper().endswith(".KS")
-        pay_offset = 20 if is_kr else 14   # 지급일 추정 오프셋(일)
 
         # 현재가 (분배율 계산용)
         price = None
@@ -245,7 +246,7 @@ def collect_us_via_yfinance(ticker):
                     "code":         ticker,
                     "record_date":  None,
                     "ex_div_date":  ex_div_str,    # 배당락일 (yfinance 제공)
-                    "payment_date": payment_date,  # 추정 지급일 (배당락일 + 오프셋)
+                    "payment_date": payment_date,  # 추정 지급일 (배당락일 + pay_offset)
                     "amount":       round(float(amount), 5),
                     "dist_rate":    dist_rate,
                     "is_upcoming":  1 if payment_date > today else 0,
@@ -260,14 +261,13 @@ def collect_us_via_yfinance(ticker):
 
                 if ex_date_raw and div_amount and float(div_amount) > 0:
                     ex_date_str = _to_date_str(ex_date_raw)
-                    # 지급일 = 배당락일 + 약 2주
                     try:
                         pay_str = (datetime.strptime(ex_date_str, "%Y-%m-%d")
-                                   + timedelta(days=14)).strftime("%Y-%m-%d")
+                                   + timedelta(days=pay_offset)).strftime("%Y-%m-%d")
                     except Exception:
                         pay_str = ex_date_str
 
-                    if not any(r["payment_date"] == pay_str for r in records):
+                    if not any(r["ex_div_date"] == ex_date_str for r in records):
                         dist_rate = round(float(div_amount) / price * 100, 4) if price else None
                         records.append({
                             "code":         ticker,
@@ -278,11 +278,11 @@ def collect_us_via_yfinance(ticker):
                             "dist_rate":    dist_rate,
                             "is_upcoming":  1 if pay_str > today else 0,
                         })
-                        log.info(f"[{ticker}] 예정 분배금: ${div_amount:.4f} (ex-div {ex_date_str})")
+                        log.info(f"[{ticker}] 예정 분배금: {div_amount} (ex-div {ex_date_str}, 지급예정 {pay_str})")
         except Exception as e:
             log.warning(f"[{ticker}] calendar 수집 오류: {e}")
 
-        log.info(f"[{ticker}] 분배금 {len(records)}건 수집")
+        log.info(f"[{ticker}] 분배금 {len(records)}건 수집 (pay_offset={pay_offset}일)")
         return records
 
     except Exception as e:
@@ -330,20 +330,25 @@ def main():
     for etf in etfs:
         code    = etf.get("code") or etf.get("ticker")
         country = etf.get("country")
-        log.info(f"══ {code} ({etf.get('name')}) ══")
+        cycle   = etf.get("dividend_cycle", "월")
+        log.info(f"══ {code} ({etf.get('name')}, {cycle}배당) ══")
 
         if country == "KR":
+            # 배당주기별 지급일 추정 오프셋
+            #   주배당: 배당락일 +5일 (같은 주 또는 다음 주 초 지급)
+            #   월배당: 배당락일 +20일 (같은 달 말 또는 익월 초 지급)
+            kr_pay_offset = 5 if cycle == "주" else 20
+
             records = collect_kr_via_krx_api(code)
             if not records:
-                # 순수 숫자 코드(493810 등)는 yfinance .KS로 시도
-                if code.isdigit():
-                    log.info(f"[{code}] KRX API 실패 → yfinance {code}.KS fallback")
-                    records = collect_us_via_yfinance(f"{code}.KS")
-                    # code 필드를 원래 KR 코드로 덮어쓰기
-                    for r in records:
-                        r["code"] = code
+                # KRX API 실패 → yfinance {code}.KS fallback (모든 KR ETF 코드 시도)
+                log.info(f"[{code}] KRX API 실패 → yfinance {code}.KS fallback (offset={kr_pay_offset}일)")
+                records = collect_us_via_yfinance(f"{code}.KS", pay_offset=kr_pay_offset)
+                # code 필드를 원래 KR 코드로 덮어쓰기
+                for r in records:
+                    r["code"] = code
         else:
-            records = collect_us_via_yfinance(code)
+            records = collect_us_via_yfinance(code, pay_offset=14)
 
         if records:
             saved = save_announcements(conn, records, collected_at)
