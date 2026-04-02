@@ -258,6 +258,139 @@ def _yf_session():
     return session, crumb
 
 
+def _parse_krx_date(val):
+    """KRX 날짜 문자열 정규화: YYYYMMDD → YYYY-MM-DD"""
+    v = str(val or "").strip().replace("/", "-")
+    if len(v) == 8 and v.isdigit():
+        return f"{v[:4]}-{v[4:6]}-{v[6:]}"
+    if len(v) == 10 and v[4] == "-":
+        return v
+    return None
+
+
+def _get_kr_dist_dates(code):
+    """KRX 데이터포털 API로 KR ETF 배당락일(ex_date) + 지급예정일(pay_date) 수집.
+
+    KRX getJsonData.cmd 에 여러 bld 값을 순서대로 시도한다.
+    성공 시 가장 최근/미래에 가까운 공시 레코드에서 날짜를 추출한다.
+    Returns: (ex_date, pay_date)  — 못 찾으면 (None, None)
+    """
+    today = datetime.now()
+    strt = (today - timedelta(days=90)).strftime("%Y%m%d")
+    end  = (today + timedelta(days=90)).strftime("%Y%m%d")
+
+    krx_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "http://data.krx.co.kr/",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+
+    # bld 값 후보 — 각각 다른 파라미터 조합 시도
+    configs = [
+        # ETF 분배금 지급기준일 현황 (날짜범위)
+        {"bld": "dbms/MDC/STAT/standard/MDCSTAT04401",
+         "strtDd": strt, "endDd": end},
+        # ETF 분배금 지급현황 (날짜범위)
+        {"bld": "dbms/MDC/STAT/standard/MDCSTAT04501",
+         "strtDd": strt, "endDd": end},
+        # isuCd로 특정 종목 조회 시도
+        {"bld": "dbms/MDC/STAT/standard/MDCSTAT04401",
+         "isuCd": code, "strtDd": strt, "endDd": end},
+        {"bld": "dbms/MDC/STAT/standard/MDCSTAT04501",
+         "isuCd": code, "strtDd": strt, "endDd": end},
+    ]
+
+    # 날짜 필드 후보 (배당락일 / 지급예정일)
+    EX_FIELDS  = ["EXRT_DT", "EX_DT", "exrtDt", "exDt", "BDIV_PAYMNT_RECORD_DT",
+                  "RECORD_DT", "recordDt"]
+    PAY_FIELDS = ["DIST_PAYMNT_DT", "PAYMNT_DT", "payDt", "distPaymntDt",
+                  "BDIV_PAYMNT_DT", "bdivPaymntDt", "PAY_DT"]
+    CODE_FIELDS = ["ISU_SRT_CD", "isuSrtCd", "shrtCd", "STD_CD", "stdCd"]
+
+    for cfg in configs:
+        try:
+            resp = requests.post(
+                "http://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd",
+                data=cfg,
+                headers=krx_headers,
+                timeout=15,
+            )
+            log.info(f"[{code}] KRX bld={cfg['bld'].split('/')[-1]}: "
+                     f"HTTP {resp.status_code} ({len(resp.content)} bytes)")
+            if resp.status_code != 200:
+                continue
+
+            j = resp.json()
+
+            # 응답 최상위 키 로깅 (디버그)
+            top_keys = list(j.keys())
+            log.info(f"[{code}] KRX 응답 최상위 키: {top_keys}")
+
+            # 리스트 블록 탐색
+            items = None
+            for block_key in ("OutBlock_1", "output", "items", "list", "data"):
+                candidate = j.get(block_key)
+                if isinstance(candidate, list) and candidate:
+                    items = candidate
+                    log.info(f"[{code}] KRX block='{block_key}' len={len(items)} "
+                             f"sample_keys={list(items[0].keys())[:8]}")
+                    break
+
+            if not items:
+                # 단일 객체 응답이면 리스트로 감싸기
+                if isinstance(j, dict) and any(f in j for f in EX_FIELDS + PAY_FIELDS):
+                    items = [j]
+                else:
+                    log.info(f"[{code}] KRX 응답에 리스트 블록 없음")
+                    continue
+
+            # 매칭 레코드 찾기 (최신 순으로 정렬 후 필터)
+            matched = []
+            for item in items:
+                # 종목 코드 매칭 (코드 필드가 없으면 전체 대상으로)
+                item_code = None
+                for cf in CODE_FIELDS:
+                    v = str(item.get(cf) or "").strip()
+                    if v:
+                        item_code = v
+                        break
+                if item_code and item_code != code:
+                    continue
+                matched.append(item)
+
+            if not matched:
+                log.info(f"[{code}] KRX 매칭 레코드 없음 (전체 {len(items)}건)")
+                continue
+
+            # pay_date 기준 내림차순 → 가장 최신/미래 레코드 선택
+            def sort_key(item):
+                for f in PAY_FIELDS + EX_FIELDS:
+                    v = _parse_krx_date(item.get(f))
+                    if v:
+                        return v
+                return "0000-00-00"
+
+            matched.sort(key=sort_key, reverse=True)
+            best = matched[0]
+
+            ex_date  = next((_parse_krx_date(best.get(f)) for f in EX_FIELDS  if best.get(f)), None)
+            pay_date = next((_parse_krx_date(best.get(f)) for f in PAY_FIELDS if best.get(f)), None)
+
+            log.info(f"[{code}] KRX 최종: ex_date={ex_date} pay_date={pay_date} "
+                     f"(레코드={dict(list(best.items())[:6])})")
+
+            if ex_date or pay_date:
+                return ex_date, pay_date
+
+        except Exception as e:
+            log.warning(f"[{code}] KRX dist 오류 ({cfg.get('bld', '?').split('/')[-1]}): {e}")
+
+    log.info(f"[{code}] KRX dist: 모든 시도 실패 → Yahoo Finance 폴백 사용")
+    return None, None
+
+
 def _get_aum(ticker, session, crumb):
     """Yahoo Finance 종목 페이지 HTML에서 AUM + 지급일(pay_date) 파싱 (API 401 우회)
     Returns: (aum, pay_date) tuple
@@ -470,8 +603,12 @@ def main():
             # 네이버 금융: KR ETF AUM + 순자산가치
             naver_aum, nav_per_share = _get_naver_etf(code)
             aum = naver_aum
-            # Yahoo Finance HTML: KR ETF 지급일 수집
-            _, pay_date = _get_aum(f"{code}.KS", yf_session, yf_crumb)
+            # KRX 공시: 배당락일 + 지급예정일 (우선), 실패 시 Yahoo Finance 폴백
+            kr_ex_date, pay_date = _get_kr_dist_dates(code)
+            if kr_ex_date:
+                d["ex_date"] = kr_ex_date   # KRX 공시 배당락일로 override
+            if pay_date is None:
+                _, pay_date = _get_aum(f"{code}.KS", yf_session, yf_crumb)
         else:
             d = collect_via_yahoo_api(code, etf["listed_date"], cycle, yf_session, yf_crumb)
             # US ETF AUM + 지급일: Yahoo Finance HTML 파싱
