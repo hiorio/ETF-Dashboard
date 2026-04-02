@@ -53,21 +53,14 @@ def init_dist_table(conn):
                 UNIQUE(code, ex_div_date)
             )
         """)
-        # 데이터 복사 — yfinance 데이터(record_date IS NULL, ex=pay)는 payment_date 추정 수정
+        # 데이터 복사 — yfinance 데이터(record_date IS NULL)는 payment_date = NULL로 정리
         conn.execute("""
             INSERT OR IGNORE INTO etf_dist_announcement
                 (code, record_date, ex_div_date, payment_date,
                  amount, dist_rate, is_upcoming, collected_at)
             SELECT
                 code, record_date, ex_div_date,
-                CASE
-                    WHEN record_date IS NULL AND ex_div_date = payment_date
-                         AND code IN ('JEPI','JEPQ')
-                      THEN date(ex_div_date, '+14 days')
-                    WHEN record_date IS NULL AND ex_div_date = payment_date
-                      THEN date(ex_div_date, '+20 days')
-                    ELSE payment_date
-                END,
+                CASE WHEN record_date IS NULL THEN NULL ELSE payment_date END,
                 amount, dist_rate, is_upcoming, collected_at
             FROM _ann_old
         """)
@@ -199,13 +192,11 @@ def collect_kr_via_krx_api(code):
 
 # ── US ETF: yfinance ──────────────────────────────────────────────────────
 
-def collect_us_via_yfinance(ticker, pay_offset=14):
+def collect_us_via_yfinance(ticker, pay_offset=None):
     """yfinance dividends(이력) + calendar(예정)으로 분배금 수집.
 
-    pay_offset: 배당락일 → 지급예정일 추정 일수
-      US ETF: 14일 (기본값)
-      KR 월배당: 20일 (caller가 전달)
-      KR 주배당: 5일  (caller가 전달)
+    배당락일(ex_div_date)만 저장. 지급일은 yfinance에서 제공하지 않으므로 표시 안 함.
+    pay_offset 파라미터는 하위 호환성 유지 목적으로만 남아 있음 (미사용).
     """
     try:
         import yfinance as yf
@@ -239,17 +230,16 @@ def collect_us_via_yfinance(ticker, pay_offset=14):
                 if float(amount) <= 0:
                     continue
                 ex_div_str   = date.strftime("%Y-%m-%d")
-                payment_date = (date + timedelta(days=pay_offset)).strftime("%Y-%m-%d")
                 dist_rate    = round(float(amount) / price * 100, 4) if price else None
 
                 records.append({
                     "code":         ticker,
                     "record_date":  None,
-                    "ex_div_date":  ex_div_str,    # 배당락일 (yfinance 제공)
-                    "payment_date": payment_date,  # 추정 지급일 (배당락일 + pay_offset)
+                    "ex_div_date":  ex_div_str,  # 배당락일 (yfinance 제공)
+                    "payment_date": None,         # 지급일 미제공 — 표시 안 함
                     "amount":       round(float(amount), 5),
                     "dist_rate":    dist_rate,
-                    "is_upcoming":  1 if payment_date > today else 0,
+                    "is_upcoming":  1 if ex_div_str > today else 0,
                 })
 
         # ── 다음 예정 분배금 (calendar) ─────────────────────────────────
@@ -261,11 +251,6 @@ def collect_us_via_yfinance(ticker, pay_offset=14):
 
                 if ex_date_raw and div_amount and float(div_amount) > 0:
                     ex_date_str = _to_date_str(ex_date_raw)
-                    try:
-                        pay_str = (datetime.strptime(ex_date_str, "%Y-%m-%d")
-                                   + timedelta(days=pay_offset)).strftime("%Y-%m-%d")
-                    except Exception:
-                        pay_str = ex_date_str
 
                     if not any(r["ex_div_date"] == ex_date_str for r in records):
                         dist_rate = round(float(div_amount) / price * 100, 4) if price else None
@@ -273,16 +258,16 @@ def collect_us_via_yfinance(ticker, pay_offset=14):
                             "code":         ticker,
                             "record_date":  None,
                             "ex_div_date":  ex_date_str,
-                            "payment_date": pay_str,
+                            "payment_date": None,  # 지급일 미제공 — 표시 안 함
                             "amount":       round(float(div_amount), 5),
                             "dist_rate":    dist_rate,
-                            "is_upcoming":  1 if pay_str > today else 0,
+                            "is_upcoming":  1 if ex_date_str > today else 0,
                         })
-                        log.info(f"[{ticker}] 예정 분배금: {div_amount} (ex-div {ex_date_str}, 지급예정 {pay_str})")
+                        log.info(f"[{ticker}] 예정 분배금: {div_amount} (ex-div {ex_date_str})")
         except Exception as e:
             log.warning(f"[{ticker}] calendar 수집 오류: {e}")
 
-        log.info(f"[{ticker}] 분배금 {len(records)}건 수집 (pay_offset={pay_offset}일)")
+        log.info(f"[{ticker}] 분배금 {len(records)}건 수집")
         return records
 
     except Exception as e:
