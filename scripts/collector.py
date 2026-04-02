@@ -45,6 +45,8 @@ _MIGRATIONS = [
     "ALTER TABLE etf_weekly ADD COLUMN nav_change_1m REAL",
     "ALTER TABLE etf_weekly ADD COLUMN nav_change_3m REAL",
     "ALTER TABLE etf_weekly ADD COLUMN nav_change_6m REAL",
+    "ALTER TABLE etf_weekly ADD COLUMN ex_date TEXT",
+    "ALTER TABLE etf_weekly ADD COLUMN pay_date TEXT",
 ]
 
 
@@ -86,6 +88,8 @@ def init_db(conn):
             nav_change_1m            REAL,
             nav_change_3m            REAL,
             nav_change_6m            REAL,
+            ex_date                  TEXT,
+            pay_date                 TEXT,
             dist_rate_12m            REAL,
             dist_rate_monthly        REAL,
             dist_rate_annualized     REAL,
@@ -255,15 +259,18 @@ def _yf_session():
 
 
 def _get_aum(ticker, session, crumb):
-    """Yahoo Finance 종목 페이지 HTML에서 AUM 파싱 (API 401 우회)"""
+    """Yahoo Finance 종목 페이지 HTML에서 AUM + 지급일(pay_date) 파싱 (API 401 우회)
+    Returns: (aum, pay_date) tuple
+    """
     import re as _re
+    aum, pay_date = None, None
     try:
         url = f"https://finance.yahoo.com/quote/{ticker}"
         res = session.get(url, timeout=15)
-        log.info(f"[{ticker}] AUM HTML {res.status_code} ({len(res.content)} bytes)")
+        log.info(f"[{ticker}] YF HTML {res.status_code} ({len(res.content)} bytes)")
         if res.status_code != 200:
-            log.warning(f"[{ticker}] AUM 수집 실패")
-            return None
+            log.warning(f"[{ticker}] YF HTML 수집 실패")
+            return aum, pay_date
         text = res.text
         # HTML 내 JSON이 이중 인코딩되어 따옴표가 \" 로 이스케이프됨
         # → 필드명만 찾고, 그 뒤 80자 안에서 raw:숫자 패턴 매칭
@@ -273,13 +280,30 @@ def _get_aum(ticker, session, crumb):
                 snippet = text[idx:idx + 80]
                 m = _re.search(r'raw[^:]*:\s*(\d+)', snippet)
                 if m:
-                    val = float(m.group(1))
-                    log.info(f"[{ticker}] AUM={val:,.0f} (from HTML {field})")
-                    return val
-        log.warning(f"[{ticker}] AUM 필드 없음 (HTML 파싱 실패)")
+                    aum = float(m.group(1))
+                    log.info(f"[{ticker}] AUM={aum:,.0f} (from HTML {field})")
+                    break
+        if aum is None:
+            log.warning(f"[{ticker}] AUM 필드 없음 (HTML 파싱 실패)")
+
+        # 지급일(pay_date): dividendDate 필드
+        idx = text.find("dividendDate")
+        if idx != -1:
+            snippet = text[idx:idx + 120]
+            # "fmt":"2024-01-15" 형식
+            m = _re.search(r'"fmt"\s*:\s*"(\d{4}-\d{2}-\d{2})"', snippet)
+            if m:
+                pay_date = m.group(1)
+                log.info(f"[{ticker}] pay_date={pay_date} (fmt)")
+            else:
+                # "raw":1234567890 형식 (unix timestamp)
+                m = _re.search(r'"raw"\s*:\s*(\d{9,10})', snippet)
+                if m:
+                    pay_date = datetime.fromtimestamp(int(m.group(1))).strftime("%Y-%m-%d")
+                    log.info(f"[{ticker}] pay_date={pay_date} (raw ts)")
     except Exception as e:
-        log.warning(f"[{ticker}] AUM 오류: {e}")
-    return None
+        log.warning(f"[{ticker}] YF HTML 오류: {e}")
+    return aum, pay_date
 
 
 # ── Yahoo Finance Chart API ────────────────────────────────────────────────
@@ -292,6 +316,7 @@ def collect_via_yahoo_api(ticker, listed_date, dividend_cycle="월", session=Non
         "nav_change_1y": None, "nav_change_since_listing": None,
         "return_1m": None, "return_3m": None, "return_6m": None,
         "nav_change_1m": None, "nav_change_3m": None, "nav_change_6m": None,
+        "ex_date": None,
         "dist_rate_12m": None, "dist_rate_monthly": None, "dist_rate_annualized": None,
         "monthly_dists": {},
     }
@@ -377,6 +402,11 @@ def collect_via_yahoo_api(ticker, listed_date, dividend_cycle="월", session=Non
         # 분배금
         raw_divs = (chart.get("events") or {}).get("dividends") or {}
         if raw_divs:
+            # 가장 최근 배당락일 (dividend event timestamp = ex-dividend date)
+            max_ts = max(int(k) for k in raw_divs.keys())
+            result["ex_date"] = datetime.fromtimestamp(max_ts).strftime("%Y-%m-%d")
+            log.info(f"[{ticker}] 최근 배당락일(ex_date)={result['ex_date']}")
+
             divs = pd.Series({
                 pd.Timestamp.fromtimestamp(int(k)): float(v["amount"])
                 for k, v in raw_divs.items()
@@ -440,10 +470,12 @@ def main():
             # 네이버 금융: KR ETF AUM + 순자산가치
             naver_aum, nav_per_share = _get_naver_etf(code)
             aum = naver_aum
+            # Yahoo Finance HTML: KR ETF 지급일 수집
+            _, pay_date = _get_aum(f"{code}.KS", yf_session, yf_crumb)
         else:
             d = collect_via_yahoo_api(code, etf["listed_date"], cycle, yf_session, yf_crumb)
-            # US ETF AUM: Yahoo Finance HTML 파싱
-            aum = _get_aum(code, yf_session, yf_crumb) if d.get("nav_current") else None
+            # US ETF AUM + 지급일: Yahoo Finance HTML 파싱
+            aum, pay_date = _get_aum(code, yf_session, yf_crumb) if d.get("nav_current") else (None, None)
             nav_per_share = None  # US ETF는 가격 ≈ NAV
 
         real_return_1y = None
@@ -458,9 +490,10 @@ def main():
                  nav_change_1y, nav_change_since_listing,
                  return_1m, return_3m, return_6m,
                  nav_change_1m, nav_change_3m, nav_change_6m,
+                 ex_date, pay_date,
                  dist_rate_12m, dist_rate_monthly, dist_rate_annualized,
                  real_return_1y, nav_per_share)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 code, collected_at,
@@ -470,6 +503,7 @@ def main():
                 d.get("nav_change_1y"), d.get("nav_change_since_listing"),
                 d.get("return_1m"),     d.get("return_3m"),     d.get("return_6m"),
                 d.get("nav_change_1m"), d.get("nav_change_3m"), d.get("nav_change_6m"),
+                d.get("ex_date"),       pay_date,
                 d.get("dist_rate_12m"), d.get("dist_rate_monthly"), d.get("dist_rate_annualized"),
                 real_return_1y, nav_per_share,
             ),

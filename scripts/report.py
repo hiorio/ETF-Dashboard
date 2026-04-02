@@ -73,6 +73,7 @@ def load_data():
             w.nav_change_1y, w.nav_change_since_listing,
             w.return_1m, w.return_3m, w.return_6m,
             w.nav_change_1m, w.nav_change_3m, w.nav_change_6m,
+            w.ex_date, w.pay_date,
             w.dist_rate_12m, w.dist_rate_monthly, w.dist_rate_annualized,
             w.real_return_1y, w.nav_per_share,
             m.name, m.country, m.strategy, m.dividend_cycle, m.dividend_timing,
@@ -237,11 +238,15 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
           {td_pct_neutral(r.get('dist_rate_monthly'))}
           {td_pct_neutral(r.get('dist_rate_12m'))}
           {td_pct_neutral(r.get('dist_rate_annualized'))}
+          <td class="muted-cell" style="font-size:0.78rem;white-space:nowrap">
+            {r.get('ex_date') or '-'}<br>
+            <span class="sub-val">{r.get('pay_date') or '-'}</span>
+          </td>
           <td class="real-return {real_cls}"><strong>{pct(real_val)}</strong></td>
         </tr>"""
 
     table_rows = "\n".join(row_html(r) for r in rows) if rows else (
-        '<tr><td colspan="17" class="no-data">아직 수집된 데이터가 없습니다.<br>'
+        '<tr><td colspan="18" class="no-data">아직 수집된 데이터가 없습니다.<br>'
         'GitHub Actions에서 워크플로우를 실행해 주세요.</td></tr>'
     )
 
@@ -466,6 +471,7 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
           <th>월분배율<br><span class="th-sub">최근 1회</span></th>
           <th>분배율 12M<br><span class="th-sub">최근 12개월</span></th>
           <th>분배율 연환산<br><span class="th-sub">최근분배×횟수</span></th>
+          <th>배당 일정<br><span class="th-sub">배당락일 / 지급일</span></th>
           <th>실질수익률 1Y ★<br><span class="th-sub">분배율+1Y수익</span></th>
         </tr>
       </thead>
