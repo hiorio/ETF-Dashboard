@@ -116,8 +116,8 @@ def load_data():
     """).fetchall()
     total_dist_since_listing = {r["code"]: r["total"] for r in all_dists}
 
-    # 분배금 공시 (최근 7개월 + 미래 예정)
-    cutoff_da = (datetime.now() - timedelta(days=210)).strftime("%Y-%m-%d")
+    # 분배금 공시 (이번달 1일부터 + 미래 예정)
+    cutoff_da = (datetime.now() - timedelta(days=65)).strftime("%Y-%m-01")
     announcement_rows = []
     try:
         announcement_rows = conn.execute("""
@@ -136,6 +136,22 @@ def load_data():
     except Exception:
         pass  # 테이블 없으면 빈 리스트
 
+    # 배당 지급일 패턴 (ETF별 평균 지급 일자 → 배당 타이밍 동적 계산)
+    payment_day_map = {}
+    try:
+        pd_rows = conn.execute("""
+            SELECT code,
+                   AVG(CAST(substr(payment_date, 9, 2) AS INTEGER)) as avg_day
+            FROM etf_dist_announcement
+            WHERE is_upcoming = 0
+              AND payment_date IS NOT NULL
+              AND length(payment_date) >= 10
+            GROUP BY code
+        """).fetchall()
+        payment_day_map = {r["code"]: r["avg_day"] for r in pd_rows if r["avg_day"]}
+    except Exception:
+        pass
+
     conn.close()
     return (
         [dict(r) for r in rows],
@@ -143,11 +159,13 @@ def load_data():
         monthly_dists,
         total_dist_since_listing,
         [dict(r) for r in announcement_rows],
+        payment_day_map,
     )
 
 
-def build_html(rows, history, monthly_dists, total_dist_since_listing, announcements=None):
+def build_html(rows, history, monthly_dists, total_dist_since_listing, announcements=None, payment_day_map=None):
     announcements = announcements or []
+    payment_day_map = payment_day_map or {}
     updated = rows[0]["collected_at"] if rows else "데이터 없음"
     now = datetime.now().strftime("%Y-%m-%d %H:%M KST")
 
@@ -187,8 +205,13 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing, announcem
             else '<span class="badge us">US</span>'
         )
         cycle = r.get("dividend_cycle", "-")
-        timing = r.get("dividend_timing") or ""
-        timing_str = f" {timing}" if timing else ""
+        # 실제 지급일 데이터에서 timing 동적 계산 (없으면 etf_list.json 값 사용)
+        avg_day = payment_day_map.get(code)
+        if avg_day is not None:
+            timing_str = " 중순" if avg_day <= 20 else " 말일"
+        else:
+            timing = r.get("dividend_timing") or ""
+            timing_str = f" {timing}" if timing else ""
         cycle_badge = f'<span class="badge cycle">{cycle}배당{timing_str}</span>'
 
         nav_disp  = nav_fmt(r["nav_current"], country)
@@ -249,6 +272,7 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing, announcem
             <div class="etf-name">{r['name']}</div>
             <div class="etf-sub">{country_badge} {cycle_badge} {r.get('manager','')} {erosion_badge}</div>
           </td>
+          <td class="muted-cell" style="font-size:0.78rem;letter-spacing:0.02em">{code}</td>
           <td>{nav_disp}</td>
           <td>{prev_disp}</td>
           <td class="{change_pct_cls}">{change_disp}<br><span class="sub-val">{change_pct}</span></td>
@@ -268,16 +292,17 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing, announcem
         </tr>"""
 
     table_rows = "\n".join(row_html(r) for r in rows) if rows else (
-        '<tr><td colspan="17" class="no-data">아직 수집된 데이터가 없습니다.<br>'
+        '<tr><td colspan="18" class="no-data">아직 수집된 데이터가 없습니다.<br>'
         'GitHub Actions에서 워크플로우를 실행해 주세요.</td></tr>'
     )
 
-    # ── 분배금 공시 섹션 ─────────────────────────────────
+    # ── 분배금 공시 섹션 (월별 그룹) ───────────────────────
     def announcement_section_html():
         if not announcements:
             return '<p class="muted-note">분배금 공시 데이터 없음 (수집 후 표시됩니다)</p>'
 
         today = datetime.now().strftime("%Y-%m-%d")
+        today_ym = today[:7]
         name_map    = {r["code"]: r["name"]    for r in rows}
         country_map = {r["code"]: r["country"] for r in rows}
 
@@ -287,12 +312,10 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing, announcem
                 return f"{a:,.0f}원"
             return f"${a:.4f}"
 
-        ann_rows = []
-        for a in announcements:
+        def make_row(a, is_upcoming_group=False):
             code    = a["code"]
             country = country_map.get(code, "KR")
             name    = name_map.get(code, code)
-
             payment_date = a.get("payment_date") or "-"
             record_date  = a.get("record_date")  or "-"
             ex_div_date  = a.get("ex_div_date")  or "-"
@@ -300,63 +323,97 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing, announcem
             dist_rate    = a.get("dist_rate")
             is_upcoming  = a.get("is_upcoming", 0)
 
-            # 상태 배지
-            if is_upcoming:
-                status_badge = '<span class="badge upcoming">지급예정</span>'
-            elif payment_date <= today:
-                status_badge = '<span class="badge paid">지급완료</span>'
-            else:
-                status_badge = ""
-
+            status_badge = (
+                '<span class="badge upcoming">지급예정</span>' if is_upcoming
+                else '<span class="badge paid">지급완료</span>' if payment_date <= today
+                else ""
+            )
             country_badge = (
-                '<span class="badge kr">KR</span>'
-                if country == "KR"
+                '<span class="badge kr">KR</span>' if country == "KR"
                 else '<span class="badge us">US</span>'
             )
-
-            amt_str  = amt_fmt(amount, code)  if amount  else "-"
-            rate_str = f"{dist_rate:.3f}%"    if dist_rate else "-"
-            pay_row_cls = "upcoming-row" if is_upcoming else ""
-
-            ann_rows.append(f"""
-            <tr class="{pay_row_cls}">
+            amt_str  = amt_fmt(amount, code) if amount  else "-"
+            rate_str = f"{dist_rate:.3f}%"   if dist_rate else "-"
+            pay_cls  = "upcoming-row" if is_upcoming else ""
+            pay_color = "#fbbf24" if is_upcoming else "inherit"
+            return f"""
+            <tr class="{pay_cls}">
               <td class="name-cell-sm">
                 <div style="font-weight:500">{name}</div>
                 <div style="margin-top:3px">{country_badge} {status_badge}</div>
               </td>
               <td>{record_date}</td>
               <td>{ex_div_date}</td>
-              <td style="font-weight:600;color:{'#fbbf24' if is_upcoming else 'inherit'}">{payment_date}</td>
+              <td style="font-weight:600;color:{pay_color}">{payment_date}</td>
               <td class="dist-amt">{amt_str}</td>
               <td>{rate_str}</td>
-            </tr>""")
+            </tr>"""
 
-        if not ann_rows:
+        table_header = """
+          <thead>
+            <tr>
+              <th style="text-align:left">ETF</th>
+              <th>기준일</th>
+              <th>배당락일</th>
+              <th>지급예정일</th>
+              <th>1주당 분배금</th>
+              <th>분배율</th>
+            </tr>
+          </thead>"""
+
+        # 그룹 분리: 지급예정 vs 월별 완료
+        upcoming  = [a for a in announcements if a.get("is_upcoming", 0)]
+        completed = [a for a in announcements if not a.get("is_upcoming", 0)]
+
+        # 월별 그룹 (이번달 + 전월 최대 2개월)
+        from collections import defaultdict
+        monthly_groups = defaultdict(list)
+        for a in completed:
+            ym = (a.get("payment_date") or "")[:7] or "미정"
+            monthly_groups[ym].append(a)
+        show_months = sorted(monthly_groups.keys(), reverse=True)[:2]
+
+        sections_html = []
+
+        # 지급예정 섹션
+        if upcoming:
+            rows_html = "\n".join(make_row(a) for a in upcoming)
+            sections_html.append(f"""
+        <div style="margin-bottom:16px">
+          <div style="font-weight:600;color:#fbbf24;margin-bottom:6px;font-size:0.9rem">📅 지급예정</div>
+          <div class="table-wrap">
+            <table class="dist-table">
+              {table_header}
+              <tbody>{rows_html}</tbody>
+            </table>
+          </div>
+        </div>""")
+
+        # 월별 완료 섹션
+        for ym in show_months:
+            year, month = ym[:4], ym[5:7] if len(ym) >= 7 else ("?", "?")
+            label_color = "#4ade80" if ym == today_ym else "var(--muted)"
+            rows_html = "\n".join(make_row(a) for a in monthly_groups[ym])
+            sections_html.append(f"""
+        <div style="margin-bottom:16px">
+          <div style="font-weight:600;color:{label_color};margin-bottom:6px;font-size:0.9rem">
+            {year}년 {int(month)}월
+          </div>
+          <div class="table-wrap">
+            <table class="dist-table">
+              {table_header}
+              <tbody>{rows_html}</tbody>
+            </table>
+          </div>
+        </div>""")
+
+        if not sections_html:
             return '<p class="muted-note">최근 분배금 공시 없음</p>'
 
-        ann_rows_html = "\n".join(ann_rows)
-        return f"""
-        <div class="table-wrap">
-          <table class="dist-table">
-            <thead>
-              <tr>
-                <th style="text-align:left">ETF</th>
-                <th>기준일</th>
-                <th>배당락일</th>
-                <th>지급예정일</th>
-                <th>1주당 분배금</th>
-                <th>분배율</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ann_rows_html}
-            </tbody>
-          </table>
-        </div>
+        return "\n".join(sections_html) + """
         <p style="color:var(--muted);font-size:0.75rem;margin-top:6px;">
-          매일 자동 업데이트 &nbsp;|&nbsp; KR: pykrx/KRX API &nbsp;|&nbsp; US: Yahoo Finance
-        </p>
-        """
+          매일 자동 업데이트 &nbsp;|&nbsp; KR: KRX API &nbsp;|&nbsp; US: Yahoo Finance
+        </p>"""
 
     announcement_section = announcement_section_html()
 
@@ -569,6 +626,7 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing, announcem
       <thead>
         <tr>
           <th>ETF</th>
+          <th>코드/티커<br><span class="th-sub">종목코드</span></th>
           <th>현재가<br><span class="th-sub">종가</span></th>
           <th>전일가<br><span class="th-sub">직전거래일</span></th>
           <th>등락<br><span class="th-sub">전일대비</span></th>
@@ -769,9 +827,9 @@ DATA.datasets.forEach((ds, idx) => {{
 
 def main():
     DOCS_DIR.mkdir(exist_ok=True)
-    rows, history, monthly_dists, total_dist_since_listing, announcements = load_data()
+    rows, history, monthly_dists, total_dist_since_listing, announcements, payment_day_map = load_data()
 
-    html = build_html(rows, history, monthly_dists, total_dist_since_listing, announcements)
+    html = build_html(rows, history, monthly_dists, total_dist_since_listing, announcements, payment_day_map)
     OUT_PATH.write_text(html, encoding="utf-8")
 
     print(f"리포트 생성 완료: {OUT_PATH}")

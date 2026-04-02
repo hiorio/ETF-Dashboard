@@ -146,11 +146,20 @@ def save_monthly_dists(conn, code, monthly_dists):
 # ── 공통 유틸 ─────────────────────────────────────────────────────────────
 
 def _to_float(v):
-    """쉼표·공백 제거 후 float 변환. 실패하면 None."""
+    """쉼표·공백 제거 후 float 변환. 한국어 화폐 단위(억/조/만) 자동 처리. 실패하면 None."""
     if v in (None, "", "-", "N/A"):
         return None
+    s = str(v).replace(",", "").strip()
     try:
-        return float(str(v).replace(",", "").strip())
+        for suffix, mult in (
+            ("조원", 1e12), ("조", 1e12),
+            ("억원", 1e8),  ("억", 1e8),
+            ("만원", 1e4),  ("만", 1e4),
+            ("원", 1),
+        ):
+            if suffix in s:
+                return float(s.replace(suffix, "").strip()) * mult
+        return float(s.replace("%", "").strip())
     except (ValueError, TypeError):
         return None
 
