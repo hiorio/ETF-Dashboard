@@ -29,19 +29,65 @@ DB_PATH = DATA_DIR / "etf.db"
 # ── DB 초기화 ──────────────────────────────────────────────────────────────
 
 def init_dist_table(conn):
+    """테이블 생성 + 구 스키마(UNIQUE payment_date) → 신 스키마(UNIQUE ex_div_date) 마이그레이션."""
+    # 기존 테이블 스키마 확인
+    old = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='etf_dist_announcement'"
+    ).fetchone()
+
+    if old and "UNIQUE(code, payment_date)" in old[0]:
+        log.info("DB 마이그레이션: UNIQUE(code, payment_date) → UNIQUE(code, ex_div_date)")
+        conn.execute("ALTER TABLE etf_dist_announcement RENAME TO _ann_old")
+        conn.execute("""
+            CREATE TABLE etf_dist_announcement (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                code              TEXT    NOT NULL,
+                announcement_date TEXT,
+                record_date       TEXT,
+                ex_div_date       TEXT,
+                payment_date      TEXT,
+                amount            REAL    NOT NULL,
+                dist_rate         REAL,
+                is_upcoming       INTEGER DEFAULT 0,
+                collected_at      TEXT    NOT NULL,
+                UNIQUE(code, ex_div_date)
+            )
+        """)
+        # 데이터 복사 — yfinance 데이터(record_date IS NULL, ex=pay)는 payment_date 추정 수정
+        conn.execute("""
+            INSERT OR IGNORE INTO etf_dist_announcement
+                (code, record_date, ex_div_date, payment_date,
+                 amount, dist_rate, is_upcoming, collected_at)
+            SELECT
+                code, record_date, ex_div_date,
+                CASE
+                    WHEN record_date IS NULL AND ex_div_date = payment_date
+                         AND code IN ('JEPI','JEPQ')
+                      THEN date(ex_div_date, '+14 days')
+                    WHEN record_date IS NULL AND ex_div_date = payment_date
+                      THEN date(ex_div_date, '+20 days')
+                    ELSE payment_date
+                END,
+                amount, dist_rate, is_upcoming, collected_at
+            FROM _ann_old
+        """)
+        conn.execute("DROP TABLE _ann_old")
+        conn.commit()
+        log.info("DB 마이그레이션 완료")
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS etf_dist_announcement (
             id                INTEGER PRIMARY KEY AUTOINCREMENT,
             code              TEXT    NOT NULL,
-            announcement_date TEXT,               -- 공시일 (확인 가능한 경우)
+            announcement_date TEXT,               -- 공시일
             record_date       TEXT,               -- 기준일
             ex_div_date       TEXT,               -- 배당락일
-            payment_date      TEXT NOT NULL,      -- 지급예정일 (또는 실제 지급일)
-            amount            REAL NOT NULL,      -- 1주당 분배금 (원 or USD)
+            payment_date      TEXT,               -- 지급예정일 (추정 포함)
+            amount            REAL    NOT NULL,   -- 1주당 분배금 (원 or USD)
             dist_rate         REAL,               -- 분배율 (%)
             is_upcoming       INTEGER DEFAULT 0,  -- 0: 완료, 1: 예정
             collected_at      TEXT    NOT NULL,
-            UNIQUE(code, payment_date)
+            UNIQUE(code, ex_div_date)
         )
     """)
     conn.commit()
@@ -162,6 +208,11 @@ def collect_us_via_yfinance(ticker):
         today = datetime.now().strftime("%Y-%m-%d")
         records = []
 
+        # yfinance.dividends 인덱스 = 배당락일(ex-dividend date)
+        # 실제 지급일은 배당락일 이후 (US: ~14일, KR .KS: ~20일)
+        is_kr = ticker.upper().endswith(".KS")
+        pay_offset = 20 if is_kr else 14   # 지급일 추정 오프셋(일)
+
         # 현재가 (분배율 계산용)
         price = None
         try:
@@ -186,14 +237,15 @@ def collect_us_via_yfinance(ticker):
             for date, amount in recent.items():
                 if float(amount) <= 0:
                     continue
-                payment_date = date.strftime("%Y-%m-%d")
+                ex_div_str   = date.strftime("%Y-%m-%d")
+                payment_date = (date + timedelta(days=pay_offset)).strftime("%Y-%m-%d")
                 dist_rate    = round(float(amount) / price * 100, 4) if price else None
 
                 records.append({
                     "code":         ticker,
                     "record_date":  None,
-                    "ex_div_date":  payment_date,
-                    "payment_date": payment_date,
+                    "ex_div_date":  ex_div_str,    # 배당락일 (yfinance 제공)
+                    "payment_date": payment_date,  # 추정 지급일 (배당락일 + 오프셋)
                     "amount":       round(float(amount), 5),
                     "dist_rate":    dist_rate,
                     "is_upcoming":  1 if payment_date > today else 0,

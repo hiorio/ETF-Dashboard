@@ -412,7 +412,7 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing, announcem
 
         return "\n".join(sections_html) + """
         <p style="color:var(--muted);font-size:0.75rem;margin-top:6px;">
-          매일 자동 업데이트 &nbsp;|&nbsp; KR: KRX API &nbsp;|&nbsp; US: Yahoo Finance
+          매일 자동 업데이트 &nbsp;|&nbsp; KR: KRX API &nbsp;|&nbsp; US: Yahoo Finance &nbsp;|&nbsp; ※ yfinance 수집 종목(배당락일만 알 경우)의 지급예정일은 배당락일 기준 추정값
         </p>"""
 
     announcement_section = announcement_section_html()
