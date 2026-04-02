@@ -5,12 +5,15 @@
       "capacity": "8GB",
       "currency": "USD",
       "dates": [
-        "2026-03-25"
+        "2026-03-25",
+        "2026-04-01"
       ],
       "spot": [
-        34.1
+        34.1,
+        34.0
       ],
       "contract": [
+        null,
         null
       ]
     }
@@ -19,12 +22,12 @@
     {
       "type": "DDR4",
       "capacity": "8GB",
-      "spot": 34.1,
+      "spot": 34.0,
       "contract": null,
       "currency": "USD",
-      "date": "2026-03-25",
-      "spot_change_pct": null
+      "date": "2026-04-01",
+      "spot_change_pct": -0.29
     }
   ],
-  "updated": "2026-04-01 06:08 KST"
+  "updated": "2026-04-02 00:39 KST"
 }
