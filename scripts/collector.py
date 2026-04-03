@@ -53,6 +53,11 @@ _MIGRATIONS = [
     "ALTER TABLE etf_weekly ADD COLUMN nav_change_1m REAL",
     "ALTER TABLE etf_weekly ADD COLUMN nav_change_3m REAL",
     "ALTER TABLE etf_weekly ADD COLUMN nav_change_6m REAL",
+    # 전략/과세 구분 확장
+    "ALTER TABLE etf_meta ADD COLUMN underlying TEXT",
+    "ALTER TABLE etf_meta ADD COLUMN tax_type TEXT",
+    "ALTER TABLE etf_weekly ADD COLUMN tax_base_price REAL",
+    "ALTER TABLE etf_weekly ADD COLUMN taxable_dist_amount REAL",
 ]
 
 
@@ -70,6 +75,8 @@ def init_db(conn):
             name             TEXT,
             country          TEXT,
             strategy         TEXT,
+            underlying       TEXT,
+            tax_type         TEXT,
             dividend_cycle   TEXT,
             dividend_timing  TEXT,
             manager          TEXT,
@@ -98,6 +105,8 @@ def init_db(conn):
             dist_rate_annualized     REAL,
             real_return_1y           REAL,
             nav_per_share            REAL,
+            tax_base_price           REAL,
+            taxable_dist_amount      REAL,
             UNIQUE(code, collected_at)
         );
 
@@ -117,14 +126,17 @@ def upsert_meta(conn, etf):
     conn.execute(
         """
         INSERT OR REPLACE INTO etf_meta
-            (code, name, country, strategy, dividend_cycle, dividend_timing, manager, listed_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (code, name, country, strategy, underlying, tax_type,
+             dividend_cycle, dividend_timing, manager, listed_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             code,
             etf.get("name"),
             etf.get("country"),
             etf.get("strategy"),
+            etf.get("underlying"),
+            etf.get("tax_type"),
             etf.get("dividend_cycle"),
             etf.get("dividend_timing"),
             etf.get("manager"),
@@ -174,6 +186,7 @@ def _empty_result():
         "nav_change_1m": None, "nav_change_3m": None, "nav_change_6m": None,
         "dist_rate_12m": None, "dist_rate_monthly": None, "dist_rate_annualized": None,
         "monthly_dists": {},
+        "tax_base_price": None, "taxable_dist_amount": None,
     }
 
 
@@ -254,6 +267,61 @@ def _get_krx_etf_info(code):
 
     log.warning(f"[{code}] KRX API 수집 실패")
     return None, None
+
+
+# ── KRX 과표기준가격 (해외주식형 ETF 매매차익 과세 기준가격) ────────────────
+
+def _get_krx_tax_base_price(code):
+    """KRX에서 ETF 과표기준가격 수집.
+
+    해외주식형 ETF: 매매차익 과세 시 취득·양도 과표기준가격 차액 기준 (배당소득세 15.4%)
+    반환: tax_base_price (float|None)
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Referer": "https://data.krx.co.kr/",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+
+    for days_back in range(0, 6):
+        date_str = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
+        for bld in (
+            "dbms/MDC/STAT/standard/MDCSTAT04501",  # ETF 과표기준가격현황 (1순위)
+            "dbms/MDC/STAT/standard/MDCSTAT04401",  # ETF 순자산가치현황 (fallback)
+        ):
+            try:
+                payload = {
+                    "bld": bld,
+                    "isuCd": code,
+                    "isuCd2": code,
+                    "baseDd": date_str,
+                    "csvxls_isNo": "false",
+                }
+                res = requests.post(url, data=payload, headers=headers, timeout=10)
+                if res.status_code != 200:
+                    continue
+                data = res.json()
+                items = data.get("output") or data.get("OutBlock_1") or []
+                if not items:
+                    continue
+
+                item = items[0]
+                log.info(f"[{code}] KRX 과표({bld.split('/')[-1]}, {date_str}) keys: {list(item.keys())}")
+
+                for f in ("TAX_BAS_PRC", "TAXBASPRC", "ETX_PRC", "CLSPRC",
+                          "BAS_PRC", "NAV", "NAV_PRC"):
+                    val = _to_float(item.get(f))
+                    if val and val > 100:
+                        log.info(f"[{code}] KRX 과표기준가격={val:,.0f} ({f})")
+                        return val
+
+            except Exception as e:
+                log.warning(f"[{code}] KRX 과표기준가격 API 오류 ({date_str}): {e}")
+
+    log.warning(f"[{code}] 과표기준가격 수집 실패")
+    return None
 
 
 # ── 네이버 금융 API (KR ETF AUM + NAV/주 fallback) ────────────────────────
@@ -610,6 +678,12 @@ def main():
                     nav_per_share = naver_nav
                     log.info(f"[{code}] NAV/주=Naver {nav_per_share:,.0f}원")
 
+            # ── 4) 과표기준가격: 해외주식형 ETF만 수집 ──────────────────
+            if etf.get("tax_type") == "해외주식형":
+                tax_bp = _get_krx_tax_base_price(code)
+                if tax_bp:
+                    d["tax_base_price"] = tax_bp
+
         else:
             # ── US ETF: yfinance 일괄 수집 ───────────────────────────────
             d = collect_via_yfinance(code, etf["listed_date"], cycle)
@@ -641,8 +715,9 @@ def main():
                  return_1m, return_3m, return_6m,
                  nav_change_1m, nav_change_3m, nav_change_6m,
                  dist_rate_12m, dist_rate_monthly, dist_rate_annualized,
-                 real_return_1y, nav_per_share)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 real_return_1y, nav_per_share,
+                 tax_base_price, taxable_dist_amount)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 code, collected_at,
@@ -654,6 +729,7 @@ def main():
                 d.get("nav_change_1m"), d.get("nav_change_3m"), d.get("nav_change_6m"),
                 d.get("dist_rate_12m"), d.get("dist_rate_monthly"), d.get("dist_rate_annualized"),
                 real_return_1y, nav_per_share,
+                d.get("tax_base_price"), d.get("taxable_dist_amount"),
             ),
         )
         conn.commit()
