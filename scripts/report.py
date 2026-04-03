@@ -85,7 +85,12 @@ def load_data():
             SELECT MAX(collected_at) FROM etf_weekly WHERE code = w.code
         )
         ORDER BY
-            CASE WHEN m.strategy = '커버드콜' THEN 0 ELSE 1 END,
+            CASE m.strategy
+                WHEN '커버드콜' THEN 0
+                WHEN '배당'     THEN 1
+                WHEN '해외배당' THEN 2
+                ELSE 3
+            END,
             CASE WHEN m.country = 'KR' THEN 0 ELSE 1 END,
             CASE WHEN w.real_return_1y IS NULL THEN 1 ELSE 0 END,
             w.real_return_1y DESC
@@ -132,11 +137,16 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
     updated = rows[0]["collected_at"] if rows else "데이터 없음"
     now = datetime.now().strftime("%Y-%m-%d %H:%M KST")
 
-    # ISIN 맵 (etf_list.json → funETF 링크용)
+    # ISIN / 직접 링크 맵 (etf_list.json → funETF or 네이버 링크용)
     isin_map = {}
+    link_map = {}  # link 필드 직접 지정 시 우선 사용
     try:
         etf_list = json.loads(ETF_LIST_PATH.read_text(encoding="utf-8"))
-        isin_map = {e.get("code", e.get("ticker", "")): e.get("isin", "") for e in etf_list}
+        for e in etf_list:
+            key = e.get("code") or e.get("ticker", "")
+            isin_map[key] = e.get("isin", "")
+            if e.get("link"):
+                link_map[key] = e["link"]
     except Exception:
         pass
 
@@ -245,9 +255,15 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
         real_val = r["real_return_1y"]
         real_cls = color_class(real_val)
 
-        if country == "KR":
+        if code in link_map:
+            etf_url = link_map[code]
+        elif country == "KR":
             isin = isin_map.get(code, "")
-            etf_url = f"https://www.funetf.co.kr/product/etf/view/{isin}" if isin else "#"
+            if isin:
+                etf_url = f"https://www.funetf.co.kr/product/etf/view/{isin}"
+            else:
+                # ISIN 없을 때 네이버 금융 fallback
+                etf_url = f"https://finance.naver.com/item/main.naver?code={code}"
         else:
             etf_url = f"https://finance.yahoo.com/quote/{code}"
 
@@ -283,8 +299,10 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
         if not rows:
             return ('<tr><td colspan="19" class="no-data">아직 수집된 데이터가 없습니다.<br>'
                     'GitHub Actions에서 워크플로우를 실행해 주세요.</td></tr>')
-        covered_call = [r for r in rows if r.get("strategy") == "커버드콜"]
-        dividend = [r for r in rows if r.get("strategy") not in ("커버드콜",)]
+        covered_call  = [r for r in rows if r.get("strategy") == "커버드콜"]
+        dividend      = [r for r in rows if r.get("strategy") == "배당"]
+        overseas_div  = [r for r in rows if r.get("strategy") == "해외배당"]
+        others        = [r for r in rows if r.get("strategy") not in ("커버드콜", "배당", "해외배당")]
         parts = []
         if covered_call:
             parts.append('<tr><td colspan="19" class="group-header">📈 커버드콜 ETF</td></tr>')
@@ -292,6 +310,12 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
         if dividend:
             parts.append('<tr><td colspan="19" class="group-header">💰 배당 ETF</td></tr>')
             parts.extend(row_html(r) for r in dividend)
+        if overseas_div:
+            parts.append('<tr><td colspan="19" class="group-header">🌍 해외배당 ETF</td></tr>')
+            parts.extend(row_html(r) for r in overseas_div)
+        if others:
+            parts.append('<tr><td colspan="19" class="group-header">📋 기타 ETF</td></tr>')
+            parts.extend(row_html(r) for r in others)
         return "\n".join(parts)
 
     table_rows = group_rows_html(rows)

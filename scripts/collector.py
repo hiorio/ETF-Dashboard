@@ -192,10 +192,11 @@ def _empty_result():
 
 # ── KRX 데이터 API (KR ETF AUM + NAV/주) ──────────────────────────────────
 
-def _get_krx_etf_info(code):
+def _get_krx_etf_info(code, isin=None):
     """KRX 정보데이터시스템 API로 KR ETF 기준가격(NAV/주) + 순자산총액(AUM) 수집.
 
     주말·공휴일 대비 최근 5 영업일을 순서대로 시도.
+    isin이 제공되면 ISIN을 우선 사용 (KRX API는 ISIN 기반이 더 안정적).
     반환: (nav_per_share: float|None, aum_won: float|None)
     """
     headers = {
@@ -205,6 +206,8 @@ def _get_krx_etf_info(code):
         "X-Requested-With": "XMLHttpRequest",
     }
     url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+    # ISIN이 있으면 ISIN 우선, 없으면 short code 사용
+    isu_cd = isin if isin else code
 
     # 최근 5일 시도 (공휴일/주말 대응)
     for days_back in range(0, 6):
@@ -216,8 +219,8 @@ def _get_krx_etf_info(code):
             try:
                 payload = {
                     "bld": bld,
-                    "isuCd": code,
-                    "isuCd2": code,
+                    "isuCd": isu_cd,
+                    "isuCd2": isu_cd,
                     "baseDd": date_str,
                     "share": "1",
                     "money": "1",
@@ -271,7 +274,7 @@ def _get_krx_etf_info(code):
 
 # ── KRX 과표기준가격 (해외주식형 ETF 매매차익 과세 기준가격) ────────────────
 
-def _get_krx_tax_base_price(code):
+def _get_krx_tax_base_price(code, isin=None):
     """KRX에서 ETF 과표기준가격 수집.
 
     해외주식형 ETF: 매매차익 과세 시 취득·양도 과표기준가격 차액 기준 (배당소득세 15.4%)
@@ -284,6 +287,7 @@ def _get_krx_tax_base_price(code):
         "X-Requested-With": "XMLHttpRequest",
     }
     url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+    isu_cd = isin if isin else code
 
     for days_back in range(0, 6):
         date_str = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
@@ -294,8 +298,8 @@ def _get_krx_tax_base_price(code):
             try:
                 payload = {
                     "bld": bld,
-                    "isuCd": code,
-                    "isuCd2": code,
+                    "isuCd": isu_cd,
+                    "isuCd2": isu_cd,
                     "baseDd": date_str,
                     "csvxls_isNo": "false",
                 }
@@ -622,6 +626,7 @@ def main():
 
     for etf in etfs:
         code    = etf.get("code") or etf.get("ticker")
+        isin    = etf.get("isin", "")
         country = etf.get("country")
         cycle   = etf.get("dividend_cycle", "월")
         log.info(f"══ {code} ({etf.get('name')}) ══")
@@ -648,8 +653,8 @@ def main():
                 log.info(f"[{code}] pykrx 실패 → yfinance fallback ({code}.KS)")
                 d = collect_via_yfinance(f"{code}.KS", etf["listed_date"], cycle)
 
-            # ── 2) AUM: KRX API → Naver API → yfinance KS ───────────────
-            krx_nav, krx_aum = _get_krx_etf_info(code)
+            # ── 2) AUM: KRX API(ISIN) → Naver API → pykrx 시가총액 → yfinance KS ─
+            krx_nav, krx_aum = _get_krx_etf_info(code, isin=isin)
             if krx_aum:
                 aum = krx_aum
                 log.info(f"[{code}] AUM=KRX {aum/1e8:,.0f}억원")
@@ -659,13 +664,27 @@ def main():
                     aum = naver_aum
                     log.info(f"[{code}] AUM=Naver {aum/1e8:,.0f}억원")
                 else:
-                    # 최후 fallback: yfinance KS (USD → 환율 미적용, 대략적 값)
-                    ks_aum = d.get("aum")
-                    if ks_aum:
-                        aum = ks_aum
-                        log.warning(f"[{code}] AUM=yfinance(KS) fallback (단위 불확실)")
+                    # pykrx 시가총액 fallback (ETF 시총 = AUM에 근사)
+                    try:
+                        from pykrx import stock as pykrx_stock
+                        today_str = datetime.now().strftime("%Y%m%d")
+                        mc = pykrx_stock.get_market_cap_by_ticker(today_str, market="ETF")
+                        if mc is not None and code in mc.index:
+                            pykrx_aum = float(mc.loc[code, "시가총액"])
+                            if pykrx_aum > 0:
+                                aum = pykrx_aum
+                                log.info(f"[{code}] AUM=pykrx 시가총액 {aum/1e8:,.0f}억원")
+                    except Exception as e:
+                        log.warning(f"[{code}] pykrx 시가총액 오류: {e}")
 
-            # ── 3) NAV/주: pykrx NAV → KRX API → Naver API 순 ──────────
+                    if not aum:
+                        # 최후 fallback: yfinance KS (USD → 환율 미적용, 대략적 값)
+                        ks_aum = d.get("aum")
+                        if ks_aum:
+                            aum = ks_aum
+                            log.warning(f"[{code}] AUM=yfinance(KS) fallback (단위 불확실)")
+
+            # ── 3) NAV/주: pykrx NAV → KRX API(ISIN) → Naver API 순 ────
             if d.get("nav_per_share"):
                 nav_per_share = d["nav_per_share"]
                 log.info(f"[{code}] NAV/주=pykrx {nav_per_share:,.0f}원")
@@ -680,7 +699,7 @@ def main():
 
             # ── 4) 과표기준가격: 해외주식형 ETF만 수집 ──────────────────
             if etf.get("tax_type") == "해외주식형":
-                tax_bp = _get_krx_tax_base_price(code)
+                tax_bp = _get_krx_tax_base_price(code, isin=isin)
                 if tax_bp:
                     d["tax_base_price"] = tax_bp
 
