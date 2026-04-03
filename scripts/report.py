@@ -174,9 +174,7 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
             else '<span class="badge us">US</span>'
         )
         cycle = r.get("dividend_cycle", "-")
-        timing = r.get("dividend_timing") or ""
-        timing_str = f" {timing}" if timing else ""
-        cycle_badge = f'<span class="badge cycle">{cycle}배당{timing_str}</span>'
+        cycle_badge = f'<span class="badge cycle">{cycle}배당</span>'
 
         nav_disp  = nav_fmt(r["nav_current"], country)
         prev_disp = nav_fmt(r["price_prev"], country)
