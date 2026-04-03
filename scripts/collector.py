@@ -6,7 +6,7 @@ ETF 데이터 수집기
   KR ETF:
     가격/수익률  - pykrx (기본) → yfinance {code}.KS (fallback)
     분배금       - yfinance {code}.KS
-    AUM          - KRX API (기본) → Naver API (fallback)
+    AUM          - KRX API/ISIN (기본) → Naver API → pykrx 시가총액 (fallback)
     NAV/주       - pykrx NAV 컬럼 (기본) → KRX API → Naver API (fallback)
   US ETF:
     전체         - yfinance (가격 + 분배금 + AUM)
