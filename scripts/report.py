@@ -222,7 +222,8 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
         real_cls = color_class(real_val)
 
         if country == "KR":
-            etf_url = f"https://funetf.com/etf/{code}"
+            isin = f"KR7{code}001"
+            etf_url = f"https://www.funetf.co.kr/product/etf/view/{isin}"
         else:
             etf_url = f"https://finance.yahoo.com/quote/{code}"
 
