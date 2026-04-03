@@ -11,6 +11,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
 DB_PATH = BASE_DIR / "data" / "etf.db"
+ETF_LIST_PATH = BASE_DIR / "data" / "etf_list.json"
 DOCS_DIR = BASE_DIR / "docs"
 OUT_PATH = DOCS_DIR / "index.html"
 
@@ -129,6 +130,14 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
     updated = rows[0]["collected_at"] if rows else "데이터 없음"
     now = datetime.now().strftime("%Y-%m-%d %H:%M KST")
 
+    # ISIN 맵 (etf_list.json → funETF 링크용)
+    isin_map = {}
+    try:
+        etf_list = json.loads(ETF_LIST_PATH.read_text(encoding="utf-8"))
+        isin_map = {e.get("code", e.get("ticker", "")): e.get("isin", "") for e in etf_list}
+    except Exception:
+        pass
+
     # 차트용 JSON 데이터
     chart_labels = sorted({r["collected_at"] for r in history})
     codes = [r["code"] for r in rows]
@@ -222,8 +231,8 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
         real_cls = color_class(real_val)
 
         if country == "KR":
-            isin = f"KR7{code}001"
-            etf_url = f"https://www.funetf.co.kr/product/etf/view/{isin}"
+            isin = isin_map.get(code, "")
+            etf_url = f"https://www.funetf.co.kr/product/etf/view/{isin}" if isin else "#"
         else:
             etf_url = f"https://finance.yahoo.com/quote/{code}"
 
