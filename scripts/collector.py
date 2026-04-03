@@ -414,7 +414,10 @@ def collect_kr_via_pykrx(code, listed_date, dividend_cycle):
 
         today = datetime.now().strftime("%Y%m%d")
         listing_dt = datetime.strptime(listed_date, "%Y-%m-%d")
-        from_date = max(listing_dt, datetime.now() - timedelta(days=730)).strftime("%Y%m%d")
+        # 상장일부터 전체 이력 수집: 2년 제한 제거.
+        # 이전의 timedelta(days=730) 제한으로 인해 오래된 ETF(예: 161510, 2012년 상장)의
+        # nav_change_since_listing이 "상장이후"가 아닌 "최근 2년" 기준으로 잘못 계산됨.
+        from_date = listing_dt.strftime("%Y%m%d")
 
         df = pykrx_stock.get_etf_ohlcv_by_date(from_date, today, code)
         if df is None or df.empty:
@@ -502,7 +505,10 @@ def collect_via_yfinance(ticker, listed_date, dividend_cycle):
         import yfinance as yf
 
         yf_ticker = yf.Ticker(ticker)
-        hist = yf_ticker.history(start=listed_date, auto_adjust=True)
+        # auto_adjust=False: 배당 미조정 가격(price-only return) 사용.
+        # auto_adjust=True는 배당을 과거 가격에 소급 반영하여 nav_change_1y가
+        # total return을 근사 → dist_rate_12m을 더하면 배당이 이중 계산됨.
+        hist = yf_ticker.history(start=listed_date, auto_adjust=False)
         if hist.empty:
             log.warning(f"[{ticker}] yfinance 가격 데이터 없음")
             return _empty_result()
@@ -654,14 +660,17 @@ def main():
                 d = collect_via_yfinance(f"{code}.KS", etf["listed_date"], cycle)
 
             # ── 2) AUM: KRX API(ISIN) → Naver API → pykrx 시가총액 → yfinance KS ─
+            # Naver API 호출 결과를 캐시하여 중복 호출 방지 (AUM + NAV 동시 활용)
+            _cached_naver_aum, _cached_naver_nav = None, None
+
             krx_nav, krx_aum = _get_krx_etf_info(code, isin=isin)
             if krx_aum:
                 aum = krx_aum
                 log.info(f"[{code}] AUM=KRX {aum/1e8:,.0f}억원")
             else:
-                naver_aum, naver_nav = _get_naver_etf(code)
-                if naver_aum:
-                    aum = naver_aum
+                _cached_naver_aum, _cached_naver_nav = _get_naver_etf(code)
+                if _cached_naver_aum:
+                    aum = _cached_naver_aum
                     log.info(f"[{code}] AUM=Naver {aum/1e8:,.0f}억원")
                 else:
                     # pykrx 시가총액 fallback (ETF 시총 = AUM에 근사)
@@ -685,16 +694,22 @@ def main():
                             log.warning(f"[{code}] AUM=yfinance(KS) fallback (단위 불확실)")
 
             # ── 3) NAV/주: pykrx NAV → KRX API(ISIN) → Naver API 순 ────
+            # _cached_naver_nav: AUM 수집 시 이미 호출했다면 재사용, 아니면 신규 호출
             if d.get("nav_per_share"):
                 nav_per_share = d["nav_per_share"]
                 log.info(f"[{code}] NAV/주=pykrx {nav_per_share:,.0f}원")
             elif krx_nav:
                 nav_per_share = krx_nav
                 log.info(f"[{code}] NAV/주=KRX {nav_per_share:,.0f}원")
+            elif _cached_naver_nav:
+                # Naver를 AUM 수집 시 이미 호출 → 캐시 재사용 (중복 호출 방지)
+                nav_per_share = _cached_naver_nav
+                log.info(f"[{code}] NAV/주=Naver(캐시) {nav_per_share:,.0f}원")
             else:
-                _, naver_nav = _get_naver_etf(code)
-                if naver_nav:
-                    nav_per_share = naver_nav
+                # KRX AUM은 성공했지만 KRX NAV가 없는 경우 → Naver 신규 호출
+                _, naver_nav_extra = _get_naver_etf(code)
+                if naver_nav_extra:
+                    nav_per_share = naver_nav_extra
                     log.info(f"[{code}] NAV/주=Naver {nav_per_share:,.0f}원")
 
             # ── 4) 과표기준가격: 해외주식형 ETF만 수집 ──────────────────
