@@ -1,9 +1,86 @@
 [
-  {"code": "0008S0", "name": "TIGER 미국배당다우존스타겟데일리커버드콜", "country": "KR", "strategy": "커버드콜", "dividend_cycle": "월", "dividend_timing": "말일", "manager": "미래에셋", "listed_date": "2024-02-20"},
-  {"code": "0094M0", "name": "RISE 코리아밸류업위클리고정커버드콜", "country": "KR", "strategy": "커버드콜", "dividend_cycle": "월", "dividend_timing": "말일", "manager": "KB자산운용", "listed_date": "2024-11-19"},
-  {"code": "493810", "name": "TIGER 미국AI빅테크10타겟데일리커버드콜", "country": "KR", "strategy": "커버드콜", "dividend_cycle": "월", "dividend_timing": "말일", "manager": "미래에셋", "listed_date": "2024-04-09"},
-  {"code": "498410", "name": "KODEX 금융고배당TOP10타겟위클리커버드콜", "country": "KR", "strategy": "커버드콜", "dividend_cycle": "월", "dividend_timing": "말일", "manager": "삼성자산운용", "listed_date": "2024-05-14"},
-  {"code": "0089C0", "name": "KODEX 미국S&P500변동성확대시커버드콜", "country": "KR", "strategy": "커버드콜", "dividend_cycle": "월", "dividend_timing": "말일", "manager": "삼성자산운용", "listed_date": "2024-01-01"},
-  {"ticker": "JEPI", "name": "JPMorgan Equity Premium Income", "country": "US", "strategy": "커버드콜", "dividend_cycle": "월", "dividend_timing": "초순", "manager": "JPMorgan", "listed_date": "2020-05-20"},
-  {"ticker": "JEPQ", "name": "JPMorgan Nasdaq Equity Premium Income", "country": "US", "strategy": "커버드콜", "dividend_cycle": "월", "dividend_timing": "초순", "manager": "JPMorgan", "listed_date": "2022-05-03"}
+  {
+    "code": "0008S0",
+    "name": "TIGER 미국배당다우존스타겟데일리커버드콜",
+    "country": "KR",
+    "strategy": "커버드콜",
+    "underlying": "해외주식",
+    "tax_type": "해외주식형",
+    "dividend_cycle": "월",
+    "dividend_timing": "말일",
+    "manager": "미래에셋",
+    "listed_date": "2024-02-20"
+  },
+  {
+    "code": "0094M0",
+    "name": "RISE 코리아밸류업위클리고정커버드콜",
+    "country": "KR",
+    "strategy": "커버드콜",
+    "underlying": "국내주식",
+    "tax_type": "국내주식형",
+    "dividend_cycle": "주",
+    "dividend_timing": "말일",
+    "manager": "KB자산운용",
+    "listed_date": "2024-11-19"
+  },
+  {
+    "code": "493810",
+    "name": "TIGER 미국AI빅테크10타겟데일리커버드콜",
+    "country": "KR",
+    "strategy": "커버드콜",
+    "underlying": "해외주식",
+    "tax_type": "해외주식형",
+    "dividend_cycle": "월",
+    "dividend_timing": "말일",
+    "manager": "미래에셋",
+    "listed_date": "2024-04-09"
+  },
+  {
+    "code": "498410",
+    "name": "KODEX 금융고배당TOP10타겟위클리커버드콜",
+    "country": "KR",
+    "strategy": "커버드콜",
+    "underlying": "국내주식",
+    "tax_type": "국내주식형",
+    "dividend_cycle": "월",
+    "dividend_timing": "말일",
+    "manager": "삼성자산운용",
+    "listed_date": "2024-05-14"
+  },
+  {
+    "code": "0089C0",
+    "name": "KODEX 미국S&P500변동성확대시커버드콜",
+    "country": "KR",
+    "strategy": "커버드콜",
+    "underlying": "해외주식",
+    "tax_type": "해외주식형",
+    "dividend_cycle": "월",
+    "dividend_timing": "말일",
+    "manager": "삼성자산운용",
+    "listed_date": "2024-01-01"
+  },
+  {
+    "ticker": "JEPI",
+    "name": "JPMorgan Equity Premium Income",
+    "country": "US",
+    "strategy": "커버드콜",
+    "underlying": "해외주식",
+    "tax_type": "해외ETF",
+    "dividend_cycle": "월",
+    "dividend_timing": "초순",
+    "manager": "JPMorgan",
+    "listed_date": "2020-05-20"
+  },
+  {
+    "ticker": "JEPQ",
+    "name": "JPMorgan Nasdaq Equity Premium Income",
+    "country": "US",
+    "strategy": "커버드콜",
+    "underlying": "해외주식",
+    "tax_type": "해외ETF",
+    "dividend_cycle": "월",
+    "dividend_timing": "초순",
+    "manager": "JPMorgan",
+    "listed_date": "2022-05-03"
+  }
 ]

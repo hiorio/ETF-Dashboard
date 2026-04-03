@@ -90,6 +90,20 @@
   .badge.us { background: #3b1f1f; color: #f87171; }
   .badge.cycle { background: #1f2d1f; color: #86efac; }
   .badge.erosion { background: #3b1a1a; color: #fca5a5; }
+  .badge.tax-domestic { background: #1a2a1a; color: #6ee7b7; }
+  .badge.tax-foreign { background: #2a1f0a; color: #fcd34d; }
+  .badge.tax-overseas-etf { background: #2a0a0a; color: #fca5a5; }
+  .badge.tax-other { background: #1a1a2a; color: #a5b4fc; }
+  .group-header {
+    background: #21253a;
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 10px 14px !important;
+    text-align: left !important;
+    border-top: 2px solid var(--border);
+  }
   .no-data {
     text-align: center !important;
     padding: 40px !important;
@@ -131,7 +145,7 @@
 
 <div class="header">
   <h1>📊 배당 ETF 대시보드</h1>
-  <p>커버드콜 ETF 옥석 가리기 · 최종 수집: 2026-04-01 · 생성: 2026-04-01 00:54 KST</p>
+  <p>커버드콜 ETF 옥석 가리기 · 최종 수집: 2026-04-01 · 생성: 2026-04-03 01:44 KST</p>
   <nav style="display:flex;justify-content:center;gap:12px;margin-top:14px;">
     <a href="index.html" style="color:var(--acc);text-decoration:none;font-size:0.82rem;padding:4px 12px;border:1px solid var(--acc);border-radius:6px;">📊 ETF 대시보드</a>
     <a href="dram.html" style="color:var(--muted);text-decoration:none;font-size:0.82rem;padding:4px 12px;border:1px solid var(--border);border-radius:6px;">🖥️ D램 가격</a>
@@ -140,7 +154,7 @@
 
 <div class="container">
 
-  <div class="section-title">📋 최신 지표 스냅샷 (실질수익률 기준 정렬)</div>
+  <div class="section-title">📋 최신 지표 스냅샷 (전략별 그룹 · 실질수익률 기준 정렬)</div>
   <div class="table-wrap">
     <table>
       <thead>
@@ -158,6 +172,7 @@
           <th>상장이후 NAV<br><span class="th-sub">상장가 기준</span></th>
           <th>상장이후 총수익률 ★★<br><span class="th-sub">NAV변화+누적분배</span></th>
           <th>순자산가치<br><span class="th-sub">프리미엄/할인</span></th>
+          <th>과표기준가격<br><span class="th-sub">해외주식형만</span></th>
           <th>월분배율<br><span class="th-sub">최근 1회</span></th>
           <th>분배율 12M<br><span class="th-sub">최근 12개월</span></th>
           <th>분배율 연환산<br><span class="th-sub">최근분배×횟수</span></th>
@@ -165,11 +180,12 @@
         </tr>
       </thead>
       <tbody>
-        
+        <tr><td colspan="18" class="group-header">📈 커버드콜 ETF</td></tr>
+
         <tr>
           <td class="name-cell">
             <div class="etf-name">RISE 코리아밸류업위클리고정커버드콜</div>
-            <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge cycle">주배당</span> KB자산운용 </div>
+            <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge cycle">주배당</span>  KB자산운용 </div>
           </td>
           <td>15,315원</td>
           <td>14,550원</td>
@@ -183,6 +199,7 @@
           <td class="pos">+52.69%</td>
           <td class="pos"><strong>+66.10%</strong></td>
           <td>14,522원<br><span class="sub-val"><span class="pos">+5.46%</span></span></td>
+          <td class="muted-cell">-</td>
           <td class="neutral">2.61%</td>
           <td class="neutral">8.75%</td>
           <td class="neutral">135.81%</td>
@@ -192,7 +209,7 @@
         <tr>
           <td class="name-cell">
             <div class="etf-name">KODEX 금융고배당TOP10타겟위클리커버드콜</div>
-            <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge cycle">주배당</span> 삼성자산운용 </div>
+            <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge cycle">주배당</span>  삼성자산운용 </div>
           </td>
           <td>12,765원</td>
           <td>12,400원</td>
@@ -206,6 +223,7 @@
           <td class="pos">+30.12%</td>
           <td class="pos"><strong>+52.10%</strong></td>
           <td>12,368원<br><span class="sub-val"><span class="pos">+3.21%</span></span></td>
+          <td class="muted-cell">-</td>
           <td class="neutral">1.27%</td>
           <td class="neutral">14.48%</td>
           <td class="neutral">65.99%</td>
@@ -215,7 +233,7 @@
         <tr>
           <td class="name-cell">
             <div class="etf-name">TIGER 미국AI빅테크10타겟데일리커버드콜</div>
-            <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge cycle">월배당</span> 미래에셋 </div>
+            <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge cycle">월배당</span>  미래에셋 </div>
           </td>
           <td>11,045원</td>
           <td>10,760원</td>
@@ -229,6 +247,7 @@
           <td class="pos">+8.71%</td>
           <td class="pos"><strong>+43.40%</strong></td>
           <td>10,687원<br><span class="sub-val"><span class="pos">+3.35%</span></span></td>
+          <td class="muted-cell">-</td>
           <td class="neutral">1.29%</td>
           <td class="neutral">15.13%</td>
           <td class="neutral">15.54%</td>
@@ -238,7 +257,7 @@
         <tr>
           <td class="name-cell">
             <div class="etf-name">TIGER 미국배당다우존스타겟데일리커버드콜</div>
-            <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge cycle">월배당</span> 미래에셋 </div>
+            <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge cycle">월배당</span>  미래에셋 </div>
           </td>
           <td>10,180원</td>
           <td>10,370원</td>
@@ -252,6 +271,7 @@
           <td class="pos">+2.62%</td>
           <td class="pos"><strong>+15.70%</strong></td>
           <td>10,295원<br><span class="sub-val"><span class="neg">-1.12%</span></span></td>
+          <td class="muted-cell">-</td>
           <td class="neutral">0.99%</td>
           <td class="neutral">10.79%</td>
           <td class="neutral">11.91%</td>
@@ -261,7 +281,7 @@
         <tr>
           <td class="name-cell">
             <div class="etf-name">KODEX 미국S&P500변동성확대시커버드콜</div>
-            <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge cycle">월배당</span> 삼성자산운용 </div>
+            <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge cycle">월배당</span>  삼성자산운용 </div>
           </td>
           <td>10,895원</td>
           <td>11,060원</td>
@@ -275,6 +295,7 @@
           <td class="pos">+9.28%</td>
           <td class="pos"><strong>+11.30%</strong></td>
           <td>10,991원<br><span class="sub-val"><span class="neg">-0.87%</span></span></td>
+          <td class="muted-cell">-</td>
           <td class="neutral">1.27%</td>
           <td class="neutral">1.84%</td>
           <td class="neutral">15.20%</td>
@@ -284,7 +305,7 @@
         <tr>
           <td class="name-cell">
             <div class="etf-name">JPMorgan Nasdaq Equity Premium Income</div>
-            <div class="etf-sub"><span class="badge us">US</span> <span class="badge cycle">월배당</span> JPMorgan </div>
+            <div class="etf-sub"><span class="badge us">US</span> <span class="badge cycle">월배당</span> <span class="badge tax-overseas-etf">양도소득세</span> JPMorgan </div>
           </td>
           <td>$55.52</td>
           <td>$53.77</td>
@@ -298,6 +319,7 @@
           <td class="pos">+8.66%</td>
           <td class="pos"><strong>+50.60%</strong></td>
           <td>-<br><span class="sub-val">-</span></td>
+          <td class="muted-cell">-</td>
           <td class="neutral">0.92%</td>
           <td class="neutral">11.11%</td>
           <td class="neutral">11.00%</td>
@@ -307,7 +329,7 @@
         <tr>
           <td class="name-cell">
             <div class="etf-name">JPMorgan Equity Premium Income</div>
-            <div class="etf-sub"><span class="badge us">US</span> <span class="badge cycle">월배당</span> JPMorgan </div>
+            <div class="etf-sub"><span class="badge us">US</span> <span class="badge cycle">월배당</span> <span class="badge tax-overseas-etf">양도소득세</span> JPMorgan </div>
           </td>
           <td>$56.68</td>
           <td>$55.65</td>
@@ -321,6 +343,7 @@
           <td class="pos">+13.51%</td>
           <td class="pos"><strong>+69.60%</strong></td>
           <td>-<br><span class="sub-val">-</span></td>
+          <td class="muted-cell">-</td>
           <td class="neutral">0.62%</td>
           <td class="neutral">8.40%</td>
           <td class="neutral">7.43%</td>
@@ -332,7 +355,12 @@
   <p style="color:var(--muted);font-size:0.75rem;margin-top:8px;">
     ★ 실질수익률 1Y = 분배율 12M + 1Y 수익률 &nbsp;|&nbsp;
     ★★ 상장이후 총수익률 = 상장이후 NAV변화 + 상장이후 누적분배율 &nbsp;|&nbsp;
-    ⚠ 자본침식 = 상장이후 NAV -5% 이하이면서 분배금 지급 중
+    ⚠ 자본침식 = 상장이후 NAV -5% 이하이면서 분배금 지급 중<br>
+    <span style="margin-top:4px;display:inline-block;">
+      과세: <span style="color:#6ee7b7">■ 국내주식형</span> 매매차익 비과세·분배금 15.4% &nbsp;|&nbsp;
+      <span style="color:#fcd34d">■ 해외주식형</span> 매매차익·분배금 모두 15.4% (과표기준가격 기준) &nbsp;|&nbsp;
+      <span style="color:#fca5a5">■ 양도소득세</span> 해외 ETF 22% (연 250만원 공제)
+    </span>
   </p>
 
   <div class="section-title">💰 월별 분배금 이력 (직전 1년)</div>

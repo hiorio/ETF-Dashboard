@@ -75,14 +75,16 @@ def load_data():
             w.nav_change_1m, w.nav_change_3m, w.nav_change_6m,
             w.dist_rate_12m, w.dist_rate_monthly, w.dist_rate_annualized,
             w.real_return_1y, w.nav_per_share,
-            m.name, m.country, m.strategy, m.dividend_cycle, m.dividend_timing,
-            m.manager, m.listed_date
+            w.tax_base_price, w.taxable_dist_amount,
+            m.name, m.country, m.strategy, m.underlying, m.tax_type,
+            m.dividend_cycle, m.dividend_timing, m.manager, m.listed_date
         FROM etf_weekly w
         JOIN etf_meta m ON m.code = w.code
         WHERE w.collected_at = (
             SELECT MAX(collected_at) FROM etf_weekly WHERE code = w.code
         )
         ORDER BY
+            CASE WHEN m.strategy = '커버드콜' THEN 0 ELSE 1 END,
             CASE WHEN m.country = 'KR' THEN 0 ELSE 1 END,
             CASE WHEN w.real_return_1y IS NULL THEN 1 ELSE 0 END,
             w.real_return_1y DESC
@@ -151,6 +153,17 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
     PALETTE = ["#4f8ef7", "#f7874f", "#4fc98e", "#f74f7e", "#b04ff7", "#f7c94f"]
 
     # ── 테이블 행 ──────────────────────────────────────
+    def tax_badge_html(tax_type, country):
+        if country == "US":
+            return '<span class="badge tax-overseas-etf">양도소득세</span>'
+        if tax_type == "해외주식형":
+            return '<span class="badge tax-foreign">해외주식형</span>'
+        if tax_type == "국내주식형":
+            return '<span class="badge tax-domestic">국내주식형</span>'
+        if tax_type:
+            return f'<span class="badge tax-other">{tax_type}</span>'
+        return ""
+
     def row_html(r):
         code = r["code"]
         country = r["country"]
@@ -163,6 +176,7 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
         timing = r.get("dividend_timing") or ""
         timing_str = f" {timing}" if timing else ""
         cycle_badge = f'<span class="badge cycle">{cycle}배당{timing_str}</span>'
+        tax_badge = tax_badge_html(r.get("tax_type"), country)
 
         nav_disp  = nav_fmt(r["nav_current"], country)
         prev_disp = nav_fmt(r["price_prev"], country)
@@ -175,6 +189,9 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
         # 순자산가치(NAV per share) — KR ETF만
         nav_ps = r.get("nav_per_share")
         nav_ps_disp = nav_fmt(nav_ps, country) if nav_ps else "-"
+        # 과표기준가격 — 해외주식형 KR ETF만
+        tax_bp = r.get("tax_base_price")
+        tax_bp_disp = f'{tax_bp:,.0f}원' if tax_bp else "-"
         # 프리미엄/할인: (가격 - NAV) / NAV * 100
         price_now = r.get("nav_current")
         if nav_ps and price_now:
@@ -220,7 +237,7 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
         <tr>
           <td class="name-cell">
             <div class="etf-name">{r['name']}</div>
-            <div class="etf-sub">{country_badge} {cycle_badge} {r.get('manager','')} {erosion_badge}</div>
+            <div class="etf-sub">{country_badge} {cycle_badge} {tax_badge} {r.get('manager','')} {erosion_badge}</div>
           </td>
           <td>{nav_disp}</td>
           <td>{prev_disp}</td>
@@ -234,16 +251,34 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
           <td class="{chg_since_cls}">{pct(chg_since)}</td>
           <td class="{total_ret_cls}"><strong>{pct(total_ret)}</strong></td>
           <td>{nav_ps_disp}<br><span class="sub-val">{pd_disp}</span></td>
+          <td class="muted-cell">{tax_bp_disp}</td>
           {td_pct_neutral(r.get('dist_rate_monthly'))}
           {td_pct_neutral(r.get('dist_rate_12m'))}
           {td_pct_neutral(r.get('dist_rate_annualized'))}
           <td class="real-return {real_cls}"><strong>{pct(real_val)}</strong></td>
         </tr>"""
 
-    table_rows = "\n".join(row_html(r) for r in rows) if rows else (
-        '<tr><td colspan="17" class="no-data">아직 수집된 데이터가 없습니다.<br>'
-        'GitHub Actions에서 워크플로우를 실행해 주세요.</td></tr>'
-    )
+    def group_rows_html(rows):
+        if not rows:
+            return '<tr><td colspan="18" class="no-data">아직 수집된 데이터가 없습니다.<br>GitHub Actions에서 워크플로우를 실행해 주세요.</td></tr>'
+
+        covered_call = [r for r in rows if r.get("strategy") == "커버드콜"]
+        dividend = [r for r in rows if r.get("strategy") != "커버드콜"]
+
+        parts = []
+        if covered_call:
+            parts.append(
+                f'<tr><td colspan="18" class="group-header">📈 커버드콜 ETF</td></tr>'
+            )
+            parts.extend(row_html(r) for r in covered_call)
+        if dividend:
+            parts.append(
+                f'<tr><td colspan="18" class="group-header">💰 배당 ETF</td></tr>'
+            )
+            parts.extend(row_html(r) for r in dividend)
+        return "\n".join(parts)
+
+    table_rows = group_rows_html(rows)
 
     # ── 월별 분배금 섹션 ────────────────────────────────
     def dist_section_html():
@@ -395,6 +430,20 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
   .badge.us {{ background: #3b1f1f; color: #f87171; }}
   .badge.cycle {{ background: #1f2d1f; color: #86efac; }}
   .badge.erosion {{ background: #3b1a1a; color: #fca5a5; }}
+  .badge.tax-domestic {{ background: #1a2a1a; color: #6ee7b7; }}
+  .badge.tax-foreign {{ background: #2a1f0a; color: #fcd34d; }}
+  .badge.tax-overseas-etf {{ background: #2a0a0a; color: #fca5a5; }}
+  .badge.tax-other {{ background: #1a1a2a; color: #a5b4fc; }}
+  .group-header {{
+    background: #21253a;
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 10px 14px !important;
+    text-align: left !important;
+    border-top: 2px solid var(--border);
+  }}
   .no-data {{
     text-align: center !important;
     padding: 40px !important;
@@ -445,7 +494,7 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
 
 <div class="container">
 
-  <div class="section-title">📋 최신 지표 스냅샷 (실질수익률 기준 정렬)</div>
+  <div class="section-title">📋 최신 지표 스냅샷 (전략별 그룹 · 실질수익률 기준 정렬)</div>
   <div class="table-wrap">
     <table>
       <thead>
@@ -463,6 +512,7 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
           <th>상장이후 NAV<br><span class="th-sub">상장가 기준</span></th>
           <th>상장이후 총수익률 ★★<br><span class="th-sub">NAV변화+누적분배</span></th>
           <th>순자산가치<br><span class="th-sub">프리미엄/할인</span></th>
+          <th>과표기준가격<br><span class="th-sub">해외주식형만</span></th>
           <th>월분배율<br><span class="th-sub">최근 1회</span></th>
           <th>분배율 12M<br><span class="th-sub">최근 12개월</span></th>
           <th>분배율 연환산<br><span class="th-sub">최근분배×횟수</span></th>
@@ -477,7 +527,12 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
   <p style="color:var(--muted);font-size:0.75rem;margin-top:8px;">
     ★ 실질수익률 1Y = 분배율 12M + 1Y 수익률 &nbsp;|&nbsp;
     ★★ 상장이후 총수익률 = 상장이후 NAV변화 + 상장이후 누적분배율 &nbsp;|&nbsp;
-    ⚠ 자본침식 = 상장이후 NAV -5% 이하이면서 분배금 지급 중
+    ⚠ 자본침식 = 상장이후 NAV -5% 이하이면서 분배금 지급 중<br>
+    <span style="margin-top:4px;display:inline-block;">
+      과세: <span style="color:#6ee7b7">■ 국내주식형</span> 매매차익 비과세·분배금 15.4% &nbsp;|&nbsp;
+      <span style="color:#fcd34d">■ 해외주식형</span> 매매차익·분배금 모두 15.4% (과표기준가격 기준) &nbsp;|&nbsp;
+      <span style="color:#fca5a5">■ 양도소득세</span> 해외 ETF 22% (연 250만원 공제)
+    </span>
   </p>
 
   <div class="section-title">💰 월별 분배금 이력 (직전 1년)</div>
