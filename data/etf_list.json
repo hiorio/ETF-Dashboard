@@ -1,6 +1,7 @@
 [
   {"code": "0008S0", "isin": "KR70008S0004", "name": "TIGER 미국배당다우존스타겟데일리커버드콜", "country": "KR", "strategy": "커버드콜", "dividend_cycle": "월", "dividend_timing": "말일", "manager": "미래에셋", "listed_date": "2024-02-20"},
   {"code": "0094M0", "isin": "KR70094M0005", "name": "RISE 코리아밸류업위클리고정커버드콜", "country": "KR", "strategy": "커버드콜", "dividend_cycle": "월", "dividend_timing": "말일", "manager": "KB자산운용", "listed_date": "2024-11-19"},
+  {"code": "161510", "isin": "KR7161510008", "name": "PLUS 고배당주", "country": "KR", "strategy": "고배당", "dividend_cycle": "월", "dividend_timing": "말일", "manager": "한화자산운용", "listed_date": "2012-08-29"},
   {"code": "472150", "isin": "KR7472150002", "name": "TIGER 배당커버드콜액티브", "country": "KR", "strategy": "커버드콜", "dividend_cycle": "월", "dividend_timing": "말일", "manager": "미래에셋", "listed_date": "2023-12-12"},
   {"code": "493810", "isin": "KR7493810006", "name": "TIGER 미국AI빅테크10타겟데일리커버드콜", "country": "KR", "strategy": "커버드콜", "dividend_cycle": "월", "dividend_timing": "말일", "manager": "미래에셋", "listed_date": "2024-04-09"},
   {"code": "494300", "isin": "KR7494300007", "name": "KODEX 미국나스닥100데일리커버드콜OTM", "country": "KR", "strategy": "커버드콜", "dividend_cycle": "월", "dividend_timing": "말일", "manager": "삼성자산운용", "listed_date": "2024-10-22"},
