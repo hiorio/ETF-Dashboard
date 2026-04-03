@@ -221,10 +221,17 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
         real_val = r["real_return_1y"]
         real_cls = color_class(real_val)
 
+        if country == "KR":
+            etf_url = f"https://funetf.com/etf/{code}"
+        else:
+            etf_url = f"https://finance.yahoo.com/quote/{code}"
+
         return f"""
         <tr>
           <td class="name-cell">
-            <div class="etf-name">{r['name']}</div>
+            <a href="{etf_url}" target="_blank" rel="noopener noreferrer" class="etf-name-link">
+              <div class="etf-name">{r['name']}</div>
+            </a>
             <div class="etf-sub">{country_badge} {cycle_badge} {r.get('manager','')} {erosion_badge}</div>
           </td>
           <td class="muted-cell" style="font-size:0.78rem;letter-spacing:0.02em">{code}</td>
@@ -389,6 +396,8 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
   .real-return.pos {{ color: #22c55e; }}
   .real-return.neg {{ color: #ef4444; }}
   .etf-name {{ font-weight: 500; font-size: 0.88rem; }}
+  .etf-name-link {{ text-decoration: none; color: inherit; }}
+  .etf-name-link:hover .etf-name {{ text-decoration: underline; color: #4f8ef7; }}
   .etf-sub {{ margin-top: 3px; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }}
   .badge {{
     display: inline-block;
