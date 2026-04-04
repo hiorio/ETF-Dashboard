@@ -18,5 +18,6 @@
   {"ticker": "SGOV", "name": "iShares 0-3 Month Treasury Bond", "country": "US", "strategy": "기타", "underlying": "채권", "tax_type": "해외ETF", "dividend_cycle": "월", "dividend_timing": "월말", "manager": "BlackRock", "listed_date": "2022-05-26"},
   {"ticker": "QYLD", "name": "Global X Nasdaq 100 Covered Call", "country": "US", "strategy": "커버드콜", "underlying": "해외주식", "tax_type": "해외ETF", "dividend_cycle": "월", "dividend_timing": "월말", "manager": "Global X", "listed_date": "2013-12-11"},
   {"ticker": "PGX", "name": "Invesco Preferred ETF", "country": "US", "strategy": "해외배당", "underlying": "해외주식", "tax_type": "해외ETF", "dividend_cycle": "월", "dividend_timing": "월말", "manager": "Invesco", "listed_date": "2008-01-31"},
-  {"ticker": "SPYG", "name": "SPDR Portfolio S&P 500 Growth ETF", "country": "US", "strategy": "기타", "underlying": "해외주식", "tax_type": "해외ETF", "dividend_cycle": "분기", "dividend_timing": "분기말", "manager": "State Street", "listed_date": "2000-09-25"}
+  {"ticker": "SPYG", "name": "SPDR Portfolio S&P 500 Growth ETF", "country": "US", "strategy": "기타", "underlying": "해외주식", "tax_type": "해외ETF", "dividend_cycle": "분기", "dividend_timing": "분기말", "manager": "State Street", "listed_date": "2000-09-25"},
+  {"ticker": "XYLD", "name": "Global X S&P 500 Covered Call", "country": "US", "strategy": "커버드콜", "underlying": "해외주식", "tax_type": "해외ETF", "dividend_cycle": "월", "dividend_timing": "월말", "manager": "Global X", "listed_date": "2013-06-21"}
 ]
