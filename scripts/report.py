@@ -61,7 +61,7 @@ def color_class(val):
 
 def load_data():
     if not DB_PATH.exists():
-        return [], [], {}
+        return [], [], {}, {}
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -331,7 +331,7 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
             return '<p class="muted-note">월별 분배금 데이터 없음</p>'
 
         # 테이블 헤더
-        month_headers = "".join(f'<th>{int(m[5:])}월</th>' for m in all_months)
+        month_headers = "".join(f'<th>{m[2:4]}.{int(m[5:])}월</th>' for m in all_months)
 
         # 각 ETF 행
         country_map = {r["code"]: r["country"] for r in rows}
