@@ -187,6 +187,7 @@ def _empty_result():
         "dist_rate_12m": None, "dist_rate_monthly": None, "dist_rate_annualized": None,
         "monthly_dists": {},
         "tax_base_price": None, "taxable_dist_amount": None,
+        "actual_listed_date": None,  # pykrx에서 감지한 실제 첫 거래일
     }
 
 
@@ -484,6 +485,9 @@ def collect_kr_via_pykrx(code, listed_date, dividend_cycle):
         p_first = float(df[close_col].iloc[0])
         result["nav_change_since_listing"] = round((price_now / p_first - 1) * 100, 2) if p_first else None
 
+        # 실제 상장일 = pykrx가 반환한 첫 번째 거래일 (etf_list.json 입력값과 무관)
+        result["actual_listed_date"] = df.index[0].strftime("%Y-%m-%d")
+
         log.info(
             f"[{code}] pykrx 현재가={price_now:,.0f}  전일대비={result['price_change_pct']}%  "
             f"1M={r1m}%  1Y={r1y}%  NAV/주={nav_now}"
@@ -670,6 +674,17 @@ def main():
             d = collect_kr_via_pykrx(code, etf["listed_date"], cycle)
 
             if d is not None:
+                # pykrx가 감지한 실제 첫 거래일 → etf_meta.listed_date 자동 갱신
+                # (etf_list.json의 listed_date는 조회 시작 힌트일 뿐, 실제 날짜는 여기서 확정)
+                actual_date = d.get("actual_listed_date")
+                if actual_date and actual_date != etf.get("listed_date"):
+                    conn.execute(
+                        "UPDATE etf_meta SET listed_date = ? WHERE code = ?",
+                        (actual_date, code),
+                    )
+                    conn.commit()
+                    log.info(f"[{code}] 실제 상장일 자동 갱신: {etf['listed_date']} → {actual_date}")
+
                 # pykrx 성공 → 분배금만 yfinance로 보완
                 dist_data = collect_via_yfinance(f"{code}.KS", etf["listed_date"], cycle)
                 if not d.get("dist_rate_12m") and dist_data.get("dist_rate_12m"):
