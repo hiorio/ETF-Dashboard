@@ -273,6 +273,54 @@ def _get_krx_etf_info(code, isin=None):
     return None, None
 
 
+def _get_krx_listing_date(code, isin=None):
+    """KRX API에서 ETF 실제 상장일 조회.
+
+    MDCSTAT04301 (ETF 기본정보)에 LIST_DD 필드로 상장일이 포함됨.
+    반환: 'YYYY-MM-DD' 문자열 또는 None
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Referer": "https://data.krx.co.kr/",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+    isu_cd = isin if isin else code
+
+    for days_back in range(0, 6):
+        date_str = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
+        try:
+            payload = {
+                "bld": "dbms/MDC/STAT/standard/MDCSTAT04301",
+                "isuCd": isu_cd, "isuCd2": isu_cd,
+                "baseDd": date_str, "csvxls_isNo": "false",
+            }
+            res = requests.post(url, data=payload, headers=headers, timeout=10)
+            if res.status_code != 200:
+                continue
+            items = (res.json().get("output") or res.json().get("OutBlock_1") or [])
+            if not items:
+                continue
+
+            item = items[0]
+            # 상장일 후보 필드
+            for f in ("LIST_DD", "listDd", "LISTING_DATE", "listingDate",
+                      "ISU_LST_DT", "listDate", "LIST_DATE"):
+                raw = item.get(f, "")
+                if raw and len(str(raw)) >= 8:
+                    raw_s = str(raw).strip().replace("/", "-").replace(".", "-")
+                    # YYYYMMDD → YYYY-MM-DD
+                    if len(raw_s) == 8 and raw_s.isdigit():
+                        raw_s = f"{raw_s[:4]}-{raw_s[4:6]}-{raw_s[6:]}"
+                    if len(raw_s) == 10:
+                        log.info(f"[{code}] KRX 상장일={raw_s} ({f})")
+                        return raw_s
+        except Exception as e:
+            log.warning(f"[{code}] KRX 상장일 조회 오류: {e}")
+    return None
+
+
 # ── KRX 과표기준가격 (해외주식형 ETF 매매차익 과세 기준가격) ────────────────
 
 def _get_krx_tax_base_price(code, isin=None):
@@ -555,6 +603,15 @@ def collect_via_yfinance(ticker, listed_date, dividend_cycle):
         p_first = float(hist["Close"].iloc[0])
         result["nav_change_since_listing"] = round((price_now / p_first - 1) * 100, 2) if p_first else None
 
+        # 실제 상장일 = yfinance가 반환한 첫 번째 거래일
+        try:
+            first_idx = hist.index[0]
+            if hasattr(first_idx, "tz_convert"):
+                first_idx = first_idx.tz_convert(None)
+            result["actual_listed_date"] = pd.Timestamp(first_idx).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
         # 분배금
         try:
             divs = yf_ticker.dividends
@@ -696,6 +753,17 @@ def main():
                 # pykrx 실패 → yfinance 전체 fallback (신형 코드 등)
                 log.info(f"[{code}] pykrx 실패 → yfinance fallback ({code}.KS)")
                 d = collect_via_yfinance(f"{code}.KS", etf["listed_date"], cycle)
+
+                # pykrx 미지원 종목: KRX API에서 정확한 상장일 조회 (yfinance 추정보다 우선)
+                krx_listing = _get_krx_listing_date(code, isin=isin)
+                actual_date = krx_listing or d.get("actual_listed_date")
+                if actual_date and actual_date != etf.get("listed_date"):
+                    conn.execute(
+                        "UPDATE etf_meta SET listed_date = ? WHERE code = ?",
+                        (actual_date, code),
+                    )
+                    conn.commit()
+                    log.info(f"[{code}] 실제 상장일 자동 갱신(yfinance경로): {etf['listed_date']} → {actual_date}")
 
             # ── 2) AUM + NAV/주 수집 준비 ────────────────────────────────
             # Naver API 호출 결과를 캐시하여 중복 호출 방지 (AUM + NAV 동시 활용)
