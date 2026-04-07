@@ -10,6 +10,7 @@ on:
     paths:
       - "scripts/collector.py"
       - "scripts/report.py"
+      - "scripts/growth_report.py"
       - "scripts/dram_collector.py"
       - "data/etf_list.json"
       - "requirements.txt"
@@ -78,6 +79,9 @@ jobs:
 
       - name: Generate HTML report
         run: python3 scripts/report.py
+
+      - name: Generate growth HTML report
+        run: python3 scripts/growth_report.py
 
       - name: Collect DRAM prices
         run: |
@@ -148,7 +152,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           # etf.db는 artifact로 관리 — git에 포함하지 않음
-          git add docs/index.html docs/dram.html docs/dram.json 2>/dev/null || true
+          git add docs/index.html docs/growth.html docs/dram.html docs/dram.json 2>/dev/null || true
           # 변경사항이 있을 때만 커밋
           git diff --cached --quiet || \
             git commit -m "chore: weekly ETF data update $(date +'%Y-%m-%d') [skip ci]"

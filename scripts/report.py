@@ -532,8 +532,9 @@ def build_html(rows, history, monthly_dists, total_dist_since_listing):
   <h1>📊 배당 ETF 대시보드</h1>
   <p>커버드콜 ETF 옥석 가리기 · 최종 수집: {updated} · 생성: {now}</p>
   <nav style="display:flex;justify-content:center;gap:12px;margin-top:14px;">
-    <a href="index.html" style="color:var(--acc);text-decoration:none;font-size:0.82rem;padding:4px 12px;border:1px solid var(--acc);border-radius:6px;">📊 ETF 대시보드</a>
-    <a href="dram.html" style="color:var(--muted);text-decoration:none;font-size:0.82rem;padding:4px 12px;border:1px solid var(--border);border-radius:6px;">🖥️ D램 가격</a>
+    <a href="index.html"  style="color:var(--acc);text-decoration:none;font-size:0.82rem;padding:4px 12px;border:1px solid var(--acc);border-radius:6px;">📊 배당 ETF</a>
+    <a href="growth.html" style="color:var(--muted);text-decoration:none;font-size:0.82rem;padding:4px 12px;border:1px solid var(--border);border-radius:6px;">🚀 성장형 ETF</a>
+    <a href="dram.html"   style="color:var(--muted);text-decoration:none;font-size:0.82rem;padding:4px 12px;border:1px solid var(--border);border-radius:6px;">🖥️ D램 가격</a>
   </nav>
 </div>
 
