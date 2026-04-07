@@ -628,6 +628,29 @@ def main():
     collected_at = datetime.now().strftime("%Y-%m-%d")
     log.info(f"수집 시작: {collected_at}  대상 {len(etfs)}개 ETF")
 
+    # ── KR ETF 시가총액 일괄 조회 (루프 전 1회) ───────────────────────────────
+    # pykrx get_market_cap_by_ticker는 전체 ETF 시총을 한 번에 반환.
+    # 개별 KRX/Naver API보다 안정적이므로 캐시로 활용.
+    # 주말·공휴일 대비 최근 5 영업일 순서대로 시도.
+    kr_aum_cache: dict = {}
+    try:
+        from pykrx import stock as pykrx_stock
+        for days_back in range(0, 6):
+            date_str = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
+            mc = pykrx_stock.get_market_cap_by_ticker(date_str, market="ETF")
+            if mc is not None and not mc.empty:
+                kr_aum_cache = {
+                    ticker: float(row["시가총액"])
+                    for ticker, row in mc.iterrows()
+                    if float(row["시가총액"]) > 0
+                }
+                log.info(f"pykrx 시가총액 일괄 조회 완료 ({date_str}): {len(kr_aum_cache)}개 ETF")
+                break
+        if not kr_aum_cache:
+            log.warning("pykrx 시가총액 일괄 조회 실패 — 개별 API fallback 사용")
+    except Exception as e:
+        log.warning(f"pykrx 시가총액 일괄 조회 오류: {e}")
+
     success_count = 0
 
     for etf in etfs:
@@ -659,34 +682,28 @@ def main():
                 log.info(f"[{code}] pykrx 실패 → yfinance fallback ({code}.KS)")
                 d = collect_via_yfinance(f"{code}.KS", etf["listed_date"], cycle)
 
-            # ── 2) AUM: KRX API(ISIN) → Naver API → pykrx 시가총액 → yfinance KS ─
+            # ── 2) AUM + NAV/주 수집 준비 ────────────────────────────────
             # Naver API 호출 결과를 캐시하여 중복 호출 방지 (AUM + NAV 동시 활용)
             _cached_naver_aum, _cached_naver_nav = None, None
+            krx_nav = None  # KRX API로 수집한 NAV/주 (AUM과 별도 추적)
 
-            krx_nav, krx_aum = _get_krx_etf_info(code, isin=isin)
-            if krx_aum:
-                aum = krx_aum
-                log.info(f"[{code}] AUM=KRX {aum/1e8:,.0f}억원")
+            # AUM: pykrx 일괄 캐시(1순위) → KRX API → Naver API → yfinance KS
+            if code in kr_aum_cache:
+                aum = kr_aum_cache[code]
+                log.info(f"[{code}] AUM=pykrx캐시 {aum/1e8:,.0f}억원")
+                # NAV/주는 KRX API로 별도 수집 (AUM은 캐시 사용했으므로 NAV만 요청)
+                krx_nav, _ = _get_krx_etf_info(code, isin=isin)
             else:
-                _cached_naver_aum, _cached_naver_nav = _get_naver_etf(code)
-                if _cached_naver_aum:
-                    aum = _cached_naver_aum
-                    log.info(f"[{code}] AUM=Naver {aum/1e8:,.0f}억원")
+                krx_nav, krx_aum = _get_krx_etf_info(code, isin=isin)
+                if krx_aum:
+                    aum = krx_aum
+                    log.info(f"[{code}] AUM=KRX {aum/1e8:,.0f}억원")
                 else:
-                    # pykrx 시가총액 fallback (ETF 시총 = AUM에 근사)
-                    try:
-                        from pykrx import stock as pykrx_stock
-                        today_str = datetime.now().strftime("%Y%m%d")
-                        mc = pykrx_stock.get_market_cap_by_ticker(today_str, market="ETF")
-                        if mc is not None and code in mc.index:
-                            pykrx_aum = float(mc.loc[code, "시가총액"])
-                            if pykrx_aum > 0:
-                                aum = pykrx_aum
-                                log.info(f"[{code}] AUM=pykrx 시가총액 {aum/1e8:,.0f}억원")
-                    except Exception as e:
-                        log.warning(f"[{code}] pykrx 시가총액 오류: {e}")
-
-                    if not aum:
+                    _cached_naver_aum, _cached_naver_nav = _get_naver_etf(code)
+                    if _cached_naver_aum:
+                        aum = _cached_naver_aum
+                        log.info(f"[{code}] AUM=Naver {aum/1e8:,.0f}억원")
+                    else:
                         # 최후 fallback: yfinance KS (USD → 환율 미적용, 대략적 값)
                         ks_aum = d.get("aum")
                         if ks_aum:
