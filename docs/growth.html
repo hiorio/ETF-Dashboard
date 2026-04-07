@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>성장형 ETF 대시보드</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e2e8f0;
+    --muted: #8892a4;
+    --pos: #4ade80;
+    --neg: #f87171;
+    --acc: #a78bfa;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .header {
+    background: linear-gradient(135deg, #1a1d27 0%, #0f1117 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 24px 20px 20px;
+    text-align: center;
+  }
+  .header h1 { font-size: 1.6rem; font-weight: 700; color: var(--acc); }
+  .header p  { color: var(--muted); margin-top: 4px; font-size: 0.85rem; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 20px 16px; }
+  .section-title {
+    font-size: 0.9rem; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.08em; margin: 28px 0 12px;
+  }
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table {
+    width: 100%; border-collapse: collapse;
+    background: var(--card); border-radius: 10px; overflow: hidden;
+  }
+  thead tr { background: #21253a; }
+  th {
+    padding: 10px 12px; text-align: right; font-weight: 600;
+    color: var(--muted); font-size: 0.78rem; white-space: nowrap;
+  }
+  th:first-child { text-align: left; }
+  td {
+    padding: 11px 12px; text-align: right;
+    border-top: 1px solid var(--border); white-space: nowrap; font-size: 0.85rem;
+  }
+  td:first-child { text-align: left; }
+  tr:hover td { background: rgba(167,139,250,0.04); }
+  .pos { color: var(--pos); }
+  .neg { color: var(--neg); }
+  .neutral { color: var(--text); }
+  .muted-cell { color: var(--muted); font-size: 0.8rem; }
+  .sub-val { font-size: 0.75rem; opacity: 0.85; }
+  .th-sub { font-size: 0.68rem; font-weight: 400; opacity: 0.65; }
+  .etf-name { font-weight: 500; font-size: 0.88rem; }
+  .etf-name-link { text-decoration: none; color: inherit; }
+  .etf-name-link:hover .etf-name { text-decoration: underline; color: var(--acc); }
+  .etf-sub { margin-top: 3px; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+  .badge {
+    display: inline-block; padding: 1px 6px;
+    border-radius: 4px; font-size: 0.7rem; font-weight: 600;
+  }
+  .badge.kr { background: #1e3a5f; color: #60a5fa; }
+  .badge.us { background: #3b1f1f; color: #f87171; }
+  .badge.tax-domestic  { background: #1a2a1a; color: #6ee7b7; }
+  .badge.tax-foreign   { background: #2a1f0a; color: #fcd34d; }
+  .badge.tax-overseas-etf { background: #2a0a0a; color: #fca5a5; }
+  .no-data {
+    text-align: center !important; padding: 40px !important;
+    color: var(--muted); line-height: 2;
+  }
+  /* 차트 */
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 680px) { .charts { grid-template-columns: 1fr; } }
+  .chart-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px;
+  }
+  .chart-card h3 { font-size: 0.85rem; color: var(--muted); margin-bottom: 12px; }
+  canvas { width: 100% !important; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.75rem; color: var(--muted); }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  footer {
+    text-align: center; color: var(--muted); font-size: 0.75rem;
+    padding: 24px 16px; border-top: 1px solid var(--border); margin-top: 32px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🚀 성장형 ETF 대시보드</h1>
+  <p>성장성 지표 중심 · 최종 수집: 2026-04-07 · 생성: 2026-04-07 06:57 KST</p>
+  <nav style="display:flex;justify-content:center;gap:12px;margin-top:14px;">
+    <a href="index.html"  style="color:var(--muted);text-decoration:none;font-size:0.82rem;padding:4px 12px;border:1px solid var(--border);border-radius:6px;">📊 배당 ETF</a>
+    <a href="growth.html" style="color:var(--acc);text-decoration:none;font-size:0.82rem;padding:4px 12px;border:1px solid var(--acc);border-radius:6px;">🚀 성장형 ETF</a>
+    <a href="dram.html"   style="color:var(--muted);text-decoration:none;font-size:0.82rem;padding:4px 12px;border:1px solid var(--border);border-radius:6px;">🖥️ D램 가격</a>
+  </nav>
+</div>
+
+<div class="container">
+  <div class="section-title">📋 최신 지표 스냅샷 (1Y 수익률 기준 정렬)</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ETF</th>
+          <th>코드</th>
+          <th>현재가</th>
+          <th>전일가</th>
+          <th>등락<br><span class="th-sub">전일대비</span></th>
+          <th>시가총액<br><span class="th-sub">운용규모</span></th>
+          <th>상장일</th>
+          <th>수익률 1M<br><span class="th-sub">최근 1개월</span></th>
+          <th>수익률 3M<br><span class="th-sub">최근 3개월</span></th>
+          <th>수익률 6M<br><span class="th-sub">최근 6개월</span></th>
+          <th>수익률 1Y ★<br><span class="th-sub">최근 1년</span></th>
+          <th>상장이후<br><span class="th-sub">누적 수익률</span></th>
+          <th>순자산가치<br><span class="th-sub">프리미엄/할인</span></th>
+          <th>과표기준가격<br><span class="th-sub">해외주식형만</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td class="name-cell">
+            <a href="https://www.funetf.co.kr/product/etf/view/KR70173Y0007" target="_blank" rel="noopener noreferrer" class="etf-name-link">
+              <div class="etf-name">KODEX 미국AI광통신네트워크</div>
+            </a>
+            <div class="etf-sub"><span class="badge kr">KR</span> <span class="badge tax-foreign">해외주식형</span> 삼성자산운용</div>
+          </td>
+          <td class="muted-cell">0173Y0</td>
+          <td>10,730원</td>
+          <td>11,235원</td>
+          <td class="neg">-505원<br><span class="sub-val">-4.49%</span></td>
+          <td>692억원</td>
+          <td class="muted-cell">2024-09-10</td>
+          <td class="pos">+15.38%</td>
+          <td class="pos">+15.38%</td>
+          <td class="pos">+15.38%</td>
+          <td class="pos">+15.38%</td>
+          <td class="pos">+15.38%</td>
+          <td>11,026원<br><span class="sub-val"><span class="neg">-2.69%</span></span></td>
+          <td class="muted-cell">-</td>
+        </tr>
+
+        <tr>
+          <td class="name-cell">
+            <a href="https://finance.yahoo.com/quote/TQQQ" target="_blank" rel="noopener noreferrer" class="etf-name-link">
+              <div class="etf-name">ProShares UltraPro QQQ (3x)</div>
+            </a>
+            <div class="etf-sub"><span class="badge us">US</span> <span class="badge tax-overseas-etf">양도소득세</span> ProShares</div>
+          </td>
+          <td class="muted-cell">TQQQ</td>
+          <td>$44.10</td>
+          <td>$43.33</td>
+          <td class="pos">$0.77<br><span class="sub-val">+1.78%</span></td>
+          <td>$27.3B</td>
+          <td class="muted-cell">2010-02-11</td>
+          <td class="neg">-10.71%</td>
+          <td class="neg">-20.07%</td>
+          <td class="neg">-18.99%</td>
+          <td class="pos">+126.74%</td>
+          <td class="pos">+20290.61%</td>
+          <td>-<br><span class="sub-val">-</span></td>
+          <td class="muted-cell">-</td>
+        </tr>
+
+        <tr>
+          <td class="name-cell">
+            <a href="https://finance.yahoo.com/quote/QQQ" target="_blank" rel="noopener noreferrer" class="etf-name-link">
+              <div class="etf-name">Invesco QQQ Trust (Nasdaq 100)</div>
+            </a>
+            <div class="etf-sub"><span class="badge us">US</span> <span class="badge tax-overseas-etf">양도소득세</span> Invesco</div>
+          </td>
+          <td class="muted-cell">QQQ</td>
+          <td>$588.50</td>
+          <td>$584.98</td>
+          <td class="pos">$3.52<br><span class="sub-val">+0.60%</span></td>
+          <td>$395.0B</td>
+          <td class="muted-cell">1999-03-10</td>
+          <td class="neg">-3.17%</td>
+          <td class="neg">-5.69%</td>
+          <td class="neg">-3.75%</td>
+          <td class="pos">+41.45%</td>
+          <td class="pos">+1052.51%</td>
+          <td>-<br><span class="sub-val">-</span></td>
+          <td class="muted-cell">-</td>
+        </tr>
+
+        <tr>
+          <td class="name-cell">
+            <a href="https://finance.yahoo.com/quote/SPYG" target="_blank" rel="noopener noreferrer" class="etf-name-link">
+              <div class="etf-name">SPDR Portfolio S&P 500 Growth ETF</div>
+            </a>
+            <div class="etf-sub"><span class="badge us">US</span> <span class="badge tax-overseas-etf">양도소득세</span> State Street</div>
+          </td>
+          <td class="muted-cell">SPYG</td>
+          <td>$99.69</td>
+          <td>$99.26</td>
+          <td class="pos">$0.43<br><span class="sub-val">+0.43%</span></td>
+          <td>$43.9B</td>
+          <td class="muted-cell">2000-09-25</td>
+          <td class="neg">-3.91%</td>
+          <td class="neg">-7.70%</td>
+          <td class="neg">-5.61%</td>
+          <td class="pos">+38.79%</td>
+          <td class="pos">+313.76%</td>
+          <td>-<br><span class="sub-val">-</span></td>
+          <td class="muted-cell">-</td>
+        </tr>
+
+        <tr>
+          <td class="name-cell">
+            <a href="https://finance.yahoo.com/quote/SPY" target="_blank" rel="noopener noreferrer" class="etf-name-link">
+              <div class="etf-name">SPDR S&P 500 ETF Trust</div>
+            </a>
+            <div class="etf-sub"><span class="badge us">US</span> <span class="badge tax-overseas-etf">양도소득세</span> State Street</div>
+          </td>
+          <td class="muted-cell">SPY</td>
+          <td>$658.93</td>
+          <td>$655.83</td>
+          <td class="pos">$3.10<br><span class="sub-val">+0.47%</span></td>
+          <td>$698.3B</td>
+          <td class="muted-cell">1993-01-22</td>
+          <td class="neg">-2.85%</td>
+          <td class="neg">-4.44%</td>
+          <td class="neg">-2.11%</td>
+          <td class="pos">+32.72%</td>
+          <td class="pos">+1399.70%</td>
+          <td>-<br><span class="sub-val">-</span></td>
+          <td class="muted-cell">-</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="color:var(--muted);font-size:0.75rem;margin-top:8px;">
+    ★ 수익률 1Y = 가격 수익률 (분배금 미포함) &nbsp;|&nbsp;
+    과세: <span style="color:#fcd34d">■ 해외주식형</span> 매매차익·분배금 모두 15.4% &nbsp;|&nbsp;
+    <span style="color:#fca5a5">■ 양도소득세</span> 해외 ETF 22% (연 250만원 공제)
+  </p>
+
+  <div class="section-title">📈 수익률 추이 차트 (최근 12주)</div>
+  <div class="charts">
+    <div class="chart-card">
+      <h3>수익률 1Y (%)</h3>
+      <canvas id="chart1y" height="200"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>수익률 3M (%)</h3>
+      <canvas id="chart3m" height="200"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>수익률 1M (%)</h3>
+      <canvas id="chart1m" height="200"></canvas>
+    </div>
+    <div class="chart-card" style="display:flex;flex-direction:column;justify-content:center;align-items:center;padding:24px;">
+      <h3 style="margin-bottom:16px;">범례</h3>
+      <div class="legend" id="legend"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  데이터 출처: KRX, pykrx, Yahoo Finance &nbsp;|&nbsp;
+  매주 월요일 자동 업데이트 &nbsp;|&nbsp;
+  <a href="https://github.com/hiorio/ETF-Dashboard" style="color:var(--acc)">GitHub</a>
+</footer>
+
+<script>
+const DATA = {"labels": ["2026-04-05", "2026-04-06", "2026-04-07"], "datasets": [{"code": "0173Y0", "label": "KODEX 미국AI광통신네트워크", "nav_change_1y": [null, null, 15.38], "return_3m": [null, null, 15.38], "return_1m": [null, null, 15.38]}, {"code": "TQQQ", "label": "ProShares UltraPro QQQ (3x)", "nav_change_1y": [110.08, 110.08, 126.74], "return_3m": [-19.16, -21.23, -20.07], "return_1m": [-12.27, -12.27, -10.71]}, {"code": "QQQ", "label": "Invesco QQQ Trust (Nasdaq 100)", "nav_change_1y": [38.07, 38.07, 41.45], "return_3m": [-5.34, -6.17, -5.69], "return_1m": [-3.75, -3.75, -3.17]}, {"code": "SPYG", "label": "SPDR Portfolio S&P 500 Growth ETF", "nav_change_1y": [36.27, 36.27, 38.79], "return_3m": [-7.37, -7.87, -7.7], "return_1m": [-4.33, -4.33, -3.91]}, {"code": "SPY", "label": "SPDR S&P 500 ETF Trust", "nav_change_1y": [30.03, 30.03, 32.72], "return_3m": [-4.64, -5.2, -4.44], "return_1m": [-3.31, -3.31, -2.85]}]};
+const PALETTE = ["#4f8ef7", "#f7874f", "#4fc98e", "#f74f7e", "#b04ff7", "#f7c94f", "#4ff7f0", "#f7f04f", "#f74fb0", "#7ef74f"];
+
+function drawChart(canvasId, field) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.parentElement.clientWidth - 32;
+  const H = 200;
+  canvas.width  = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+
+  const labels   = DATA.labels;
+  const datasets = DATA.datasets;
+  if (!labels.length) {
+    ctx.fillStyle = '#8892a4'; ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center'; ctx.fillText('데이터 없음', W/2, H/2); return;
+  }
+
+  let allVals = [];
+  datasets.forEach(ds => ds[field].forEach(v => { if (v !== null) allVals.push(v); }));
+  if (!allVals.length) {
+    ctx.fillStyle = '#8892a4'; ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center'; ctx.fillText('데이터 없음', W/2, H/2); return;
+  }
+  const minV = Math.min(...allVals), maxV = Math.max(...allVals);
+  const pad  = (maxV - minV) * 0.15 || 1;
+  const yMin = minV - pad, yMax = maxV + pad;
+
+  const padL = 42, padR = 12, padT = 12, padB = 36;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const xOf = i => padL + (labels.length > 1 ? i / (labels.length - 1) * plotW : plotW / 2);
+  const yOf = v => padT + (1 - (v - yMin) / (yMax - yMin)) * plotH;
+
+  ctx.fillStyle = '#1a1d27'; ctx.fillRect(0, 0, W, H);
+
+  ctx.strokeStyle = '#2a2d3a'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const v = yMin + (yMax - yMin) * i / 4;
+    const y = yOf(v);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.fillStyle = '#8892a4'; ctx.font = '10px sans-serif';
+    ctx.textAlign = 'right'; ctx.fillText(v.toFixed(1), padL - 4, y + 3);
+  }
+  if (yMin < 0 && yMax > 0) {
+    const y0 = yOf(0);
+    ctx.strokeStyle = '#3a4050'; ctx.lineWidth = 1.5; ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(padL, y0); ctx.lineTo(W - padR, y0); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  datasets.forEach((ds, idx) => {
+    const color = PALETTE[idx % PALETTE.length];
+    const vals  = ds[field];
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
+    let started = false;
+    vals.forEach((v, i) => {
+      if (v === null) { started = false; return; }
+      const x = xOf(i), y = yOf(v);
+      if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    vals.forEach((v, i) => {
+      if (v === null) return;
+      ctx.beginPath(); ctx.arc(xOf(i), yOf(v), 3, 0, Math.PI*2);
+      ctx.fillStyle = color; ctx.fill();
+    });
+  });
+
+  if (labels.length >= 2) {
+    ctx.fillStyle = '#8892a4'; ctx.font = '10px sans-serif';
+    ctx.textAlign = 'left';  ctx.fillText(labels[0].slice(5), padL, H - 6);
+    ctx.textAlign = 'right'; ctx.fillText(labels[labels.length-1].slice(5), W - padR, H - 6);
+  }
+}
+
+drawChart('chart1y', 'nav_change_1y');
+drawChart('chart3m', 'return_3m');
+drawChart('chart1m', 'return_1m');
+
+const legend = document.getElementById('legend');
+DATA.datasets.forEach((ds, idx) => {
+  const color = PALETTE[idx % PALETTE.length];
+  const item  = document.createElement('div');
+  item.className = 'legend-item';
+  item.innerHTML = `<span class="legend-dot" style="background:${color}"></span>${ds.label}`;
+  legend.appendChild(item);
+});
+</script>
+</body>
+</html>
