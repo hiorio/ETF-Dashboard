@@ -84,6 +84,7 @@ def load_data():
         WHERE w.collected_at = (
             SELECT MAX(collected_at) FROM etf_weekly WHERE code = w.code
         )
+        AND m.strategy != '성장'
         ORDER BY
             CASE m.strategy
                 WHEN '커버드콜' THEN 0
